@@ -97,8 +97,11 @@ vllm serve Qwen/Qwen3-32B-AWQ \
   --port 8000 \
   --api-key EMPTY \
   --reasoning-parser qwen3 \
-  --gpu-memory-utilization 0.90 \
-  --max-model-len 32768 \
+  --gpu-memory-utilization 0.92 \
+  --max-model-len 4096 \
+  --max-num-seqs 16 \
+  --max-num-batched-tokens 8192 \
+  --enable-chunked-prefill \
   --default-chat-template-kwargs '{"enable_thinking": false}'
 ```
 
