@@ -141,7 +141,7 @@ npm install
 npm run dev
 ```
 
-默认访问地址：[http://localhost:5173](http://localhost:5173)。Vite 会把 `/api` 代理到 `http://127.0.0.1:5000`。
+默认访问地址：[http://localhost:5173](http://localhost:5173)。Vite 会把 `/api` 代理到 `http://127.0.0.1:5000`，因此前端默认不需要 `.env` 或 `.env.example`。
 
 如需指向远程后端：
 
