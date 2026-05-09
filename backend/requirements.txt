@@ -1,13 +1,13 @@
 # Backend API/worker runtime only.
 # Keep vLLM in a separate environment or service.
-# This project currently uses PaddlePaddle GPU wheels from the CUDA 13.0 index.
---extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu130/
+# Use the CPU PaddlePaddle runtime in the backend environment.
+# PaddleOCR-VL inference can still run as a separate service/container.
 
 Flask>=3.0,<4.0
 flask-cors>=4.0,<5.0
 gunicorn>=22.0,<23.0
-paddleocr[doc-parser]>=3.3,<3.4
-paddlepaddle-gpu==3.3.1
+paddleocr[doc-parser]>=3.4,<3.5
+paddlepaddle==3.3.1
 redis>=5.0,<6.0
 requests>=2.31,<3.0
 pytest>=8.0,<9.0

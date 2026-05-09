@@ -1,5 +1,149 @@
 # Document-Level RE
 
+## 当前本地启动方式
+
+当前仓库已改成一键启动脚本，优先按本节操作。下面旧的 Docker OCR / 本地 vLLM 章节是原项目说明，当前本地测试不按那套启动。
+
+### 依赖服务
+
+启动前确认这些服务可访问：
+
+```bash
+redis-cli ping
+curl http://192.168.1.2:8080/v1/models -H "Authorization: Bearer EMPTY"
+curl http://192.168.1.2:9000/v1/models -H "Authorization: Bearer EMPTY"
+```
+
+当前约定：
+
+- Redis 使用本机服务：`redis://localhost:6379/0`，不用 Docker。
+- OCR 远程服务：`http://192.168.1.2:8080/v1`，模型 `PaddleOCR-VL-1.5-0.9B`。
+- 关系抽取 LLM 远程服务：`http://192.168.1.2:9000/v1`，模型 `Qwen3-8B`。
+- 后端 conda 环境：`/home/ybxy/下载/enter/envs/icct-re`。
+- 后端环境不安装 `vllm`，不安装 `paddlepaddle-gpu`。
+
+### 一键启动
+
+```bash
+cd /mnt/code3/recctt/icct-re
+./start.sh
+```
+
+启动后打开：
+
+```text
+http://127.0.0.1:5173
+```
+
+停止：
+
+```bash
+cd /mnt/code3/recctt/icct-re
+./start.sh stop
+```
+
+日志：
+
+```text
+data/tmp/api-5011.log
+data/tmp/worker.log
+data/tmp/frontend-5173.log
+```
+
+结果保存位置：
+
+```text
+data/results/<task_id>/result.json
+data/results/<task_id>/document_text.md
+data/results/<task_id>/ocr_paragraphs.json
+```
+
+关系抽取结果在：
+
+```json
+final_relations
+```
+
+### start.sh 配置怎么改
+
+`start.sh` 里所有关键配置都可以通过环境变量覆盖，不需要直接改 Python 代码。
+
+改 OCR 服务地址或 OCR 模型：
+
+```bash
+cd /mnt/code3/recctt/icct-re
+PADDLE_OCR_SERVER_URL=http://192.168.1.2:8080/v1 \
+PADDLE_OCR_API_MODEL_NAME=PaddleOCR-VL-1.5-0.9B \
+./start.sh
+```
+
+对应默认值在 [start.sh](start.sh)：
+
+```bash
+PADDLE_OCR_BASE_URL=http://192.168.1.2:8080
+PADDLE_OCR_SERVER_URL=http://192.168.1.2:8080/v1
+PADDLE_OCR_API_MODEL_NAME=PaddleOCR-VL-1.5-0.9B
+PADDLE_OCR_MAX_CONCURRENCY=32
+```
+
+改关系抽取 LLM，也就是原项目里说的 vLLM/OpenAI 兼容接口：
+
+```bash
+cd /mnt/code3/recctt/icct-re
+VLLM_BASE_URL=http://192.168.1.2:9000/v1 \
+VLLM_MODEL=Qwen3-8B \
+SKILL4RE_MODEL=Qwen3-8B \
+./start.sh
+```
+
+对应默认值在 [start.sh](start.sh)：
+
+```bash
+VLLM_BASE_URL=http://192.168.1.2:9000/v1
+VLLM_MODEL=Qwen3-8B
+SKILL4RE_MODEL=Qwen3-8B
+```
+
+改关系抽取每批 section 数：
+
+```bash
+cd /mnt/code3/recctt/icct-re
+RELATION_SECTION_BATCH_SIZE=1 ./start.sh
+```
+
+当前默认是：
+
+```bash
+RELATION_SECTION_BATCH_SIZE=2
+```
+
+改 API / 前端端口：
+
+```bash
+cd /mnt/code3/recctt/icct-re
+API_PORT=5012 FRONTEND_PORT=5174 ./start.sh
+```
+
+改 Python 环境：
+
+```bash
+cd /mnt/code3/recctt/icct-re
+PYTHON_BIN=/path/to/python ./start.sh
+```
+
+当前默认是：
+
+```bash
+PYTHON_BIN=/home/ybxy/下载/enter/envs/icct-re/bin/python
+```
+
+更多当前改动说明见：
+
+- [CHANGES_OCR_RELATION_BACKEND.md](CHANGES_OCR_RELATION_BACKEND.md)
+- [TODO_RELATION_BATCHING.md](TODO_RELATION_BATCHING.md)
+
+---
+
 本项目实现一个文档级关系抽取（Document-level Relation Extraction）：
 
 - **Flask API**：上传文档、查询任务状态、获取抽取结果

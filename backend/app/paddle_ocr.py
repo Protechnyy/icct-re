@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,17 @@ from .types import OcrPage, RestructuredDocument
 from .utils import file_to_base64
 
 LOGGER = logging.getLogger(__name__)
+
+IGNORED_TEXT_BLOCK_LABELS = {
+    "number",
+    "footnote",
+    "header",
+    "header_image",
+    "footer",
+    "footer_image",
+    "aside_text",
+    "seal",
+}
 
 
 class PaddleOcrError(RuntimeError):
@@ -26,6 +38,16 @@ class PaddleOcrClient:
         self._pipeline = None
 
     def healthcheck(self) -> bool:
+        if self.config.paddle_ocr_mode == "python_api":
+            try:
+                response = self.session.get(
+                    f"{self.config.paddle_ocr_server_url}/models",
+                    timeout=5,
+                    headers=self._headers(),
+                )
+                return response.ok
+            except requests.RequestException:
+                return False
         try:
             response = self.session.get(f"{self.config.paddle_ocr_base_url}/health", timeout=5)
             return response.ok
@@ -47,8 +69,10 @@ class PaddleOcrClient:
         }
         return self._post("/layout-parsing", payload)
 
-    def restructure_pages(self, pages: list[dict[str, Any]] | list[Any]) -> dict[str, Any]:
+    def restructure_pages(self, pages: list[dict[str, Any]] | list[Any] | dict[str, Any]) -> dict[str, Any]:
         if self.config.paddle_ocr_mode == "python_api":
+            if isinstance(pages, dict) and isinstance(pages.get("parsing_res_list"), list):
+                return pages
             return self._restructure_pages_python(pages)
 
         payload = {
@@ -61,6 +85,9 @@ class PaddleOcrClient:
         return self._post("/restructure-pages", payload)
 
     def extract_pages(self, layout_result: dict[str, Any]) -> list[OcrPage]:
+        if isinstance(layout_result.get("parsing_res_list"), list):
+            return self._extract_pages_from_blocks(layout_result)
+
         raw_pages = layout_result.get("layoutParsingResults") or []
         pages: list[OcrPage] = []
         for idx, page in enumerate(raw_pages, start=1):
@@ -84,9 +111,9 @@ class PaddleOcrClient:
 
     def build_restructure_payload(
         self, ocr_pages: list[OcrPage], layout_result: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]] | list[Any]:
+    ) -> list[dict[str, Any]] | list[Any] | dict[str, Any]:
         if self.config.paddle_ocr_mode == "python_api":
-            return list((layout_result or {}).get("_pages_res") or [])
+            return layout_result or {}
 
         return [
             {
@@ -124,17 +151,42 @@ class PaddleOcrClient:
         pipeline = self._get_pipeline()
         try:
             pages_res = list(pipeline.predict(input=str(file_path)))
+            restructured = list(
+                pipeline.restructure_pages(
+                    pages_res,
+                    merge_tables=True,
+                    relevel_titles=True,
+                    concatenate_pages=True,
+                )
+            )
         except Exception as exc:  # noqa: BLE001
-            raise PaddleOcrError(f"PaddleOCR Python API predict failed: {exc}") from exc
+            raise PaddleOcrError(f"PaddleOCRVL predict/restructure failed: {exc}") from exc
 
-        layout_results = [self._result_to_layout_page(res) for res in pages_res]
-        LOGGER.info("PaddleOCR Python API parsed %s page(s) for %s", len(layout_results), file_path.name)
-        return {
-            "layoutParsingResults": layout_results,
-            "_pages_res": pages_res,
-        }
+        document = self._result_to_document(restructured[0]) if restructured else {}
+        if not isinstance(document.get("parsing_res_list"), list):
+            fallback_pages = [self._result_to_layout_page(res) for res in pages_res]
+            document["layoutParsingResults"] = fallback_pages
+            document["markdownText"] = "\n\n".join(
+                page.get("markdown", {}).get("text", "").strip()
+                for page in fallback_pages
+                if page.get("markdown", {}).get("text", "").strip()
+            )
+        else:
+            document["paragraphs"] = self._paragraphs_from_blocks(document)
+            document["markdownText"] = "\n\n".join(item["content"] for item in document["paragraphs"])
+            document["layoutParsingResults"] = self._layout_pages_from_blocks(document)
+        document["_pages_res"] = pages_res
+        LOGGER.info(
+            "PaddleOCRVL parsed %s page(s), %s paragraph(s) for %s",
+            document.get("page_count") or len(document.get("layoutParsingResults") or []),
+            len(document.get("paragraphs") or []),
+            file_path.name,
+        )
+        return document
 
-    def _restructure_pages_python(self, pages: list[Any]) -> dict[str, Any]:
+    def _restructure_pages_python(self, pages: list[Any] | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(pages, dict):
+            return pages
         pipeline = self._get_pipeline()
         try:
             restructured = list(
@@ -143,17 +195,28 @@ class PaddleOcrClient:
                     merge_tables=True,
                     relevel_titles=True,
                     concatenate_pages=True,
-                    prettify_markdown=True,
                 )
             )
         except Exception as exc:  # noqa: BLE001
             raise PaddleOcrError(f"PaddleOCR Python API restructure_pages failed: {exc}") from exc
 
-        return {"_restructured_results": restructured}
+        document = self._result_to_document(restructured[0]) if restructured else {}
+        if isinstance(document.get("parsing_res_list"), list):
+            document["paragraphs"] = self._paragraphs_from_blocks(document)
+            document["markdownText"] = "\n\n".join(item["content"] for item in document["paragraphs"])
+            document["layoutParsingResults"] = self._layout_pages_from_blocks(document)
+        return document
 
     def _normalize_python_restructured_document(
         self, response: dict[str, Any], fallback_pages: list[OcrPage]
     ) -> RestructuredDocument:
+        if isinstance(response.get("parsing_res_list"), list):
+            paragraphs = response.get("paragraphs") or self._paragraphs_from_blocks(response)
+            markdown_text = "\n\n".join(item["content"] for item in paragraphs if item.get("content")).strip()
+            if not markdown_text:
+                markdown_text = "\n\n".join(page.markdown_text for page in fallback_pages if page.markdown_text).strip()
+            return RestructuredDocument(markdown_text=markdown_text, layout_parsing_results=paragraphs)
+
         raw_results = response.get("_restructured_results") or []
         layout_results = [self._result_to_layout_page(res) for res in raw_results]
         markdown_parts = []
@@ -182,6 +245,7 @@ class PaddleOcrClient:
         kwargs = {
             "vl_rec_backend": "vllm-server",
             "vl_rec_server_url": self.config.paddle_ocr_server_url,
+            "vl_rec_max_concurrency": int(os.getenv("PADDLE_OCR_MAX_CONCURRENCY", "32")),
         }
         if self.config.paddle_ocr_api_model_name:
             kwargs["vl_rec_api_model_name"] = self.config.paddle_ocr_api_model_name
@@ -192,13 +256,118 @@ class PaddleOcrClient:
         except ModuleNotFoundError as exc:  # pragma: no cover - environment dependent
             if exc.name == "paddle":
                 raise PaddleOcrError(
-                    "PaddlePaddle runtime is not installed. Install it in backend/.venv, for example:\n"
-                    "python -m pip install paddlepaddle-gpu==3.3.1 "
-                    "-i https://www.paddlepaddle.org.cn/packages/stable/cu130/"
+                    "PaddlePaddle runtime is not installed. Install it in the backend environment, for example:\n"
+                    "python -m pip install paddlepaddle==3.3.1"
                 ) from exc
             raise
         LOGGER.info("Initialized PaddleOCRVL Python client with server %s", self.config.paddle_ocr_server_url)
         return self._pipeline
+
+    def _headers(self) -> dict[str, str]:
+        if not self.config.paddle_ocr_api_key:
+            return {}
+        return {"Authorization": f"Bearer {self.config.paddle_ocr_api_key}"}
+
+    def _result_to_document(self, result: Any) -> dict[str, Any]:
+        json_payload = getattr(result, "json", {}) or {}
+        if isinstance(json_payload, dict) and isinstance(json_payload.get("res"), dict):
+            return dict(json_payload["res"])
+        if isinstance(json_payload, dict):
+            return dict(json_payload)
+        return {}
+
+    def _extract_pages_from_blocks(self, document: dict[str, Any]) -> list[OcrPage]:
+        page_map = self._infer_block_pages(document.get("parsing_res_list") or [])
+        blocks_by_page: dict[int, list[dict[str, Any]]] = {}
+        text_by_page: dict[int, list[str]] = {}
+        for block in self._text_blocks(document):
+            page = page_map.get(int(block.get("global_block_id", block.get("block_id", 0))), 1)
+            blocks_by_page.setdefault(page, []).append(block)
+            text_by_page.setdefault(page, []).append(str(block.get("block_content") or "").strip())
+
+        page_count = int(document.get("page_count") or max(text_by_page, default=1))
+        pages: list[OcrPage] = []
+        for page_index in range(1, page_count + 1):
+            page_blocks = blocks_by_page.get(page_index, [])
+            page_text = "\n\n".join(text_by_page.get(page_index, [])).strip()
+            if not page_text and not page_blocks:
+                continue
+            pages.append(
+                OcrPage(
+                    page_index=page_index,
+                    pruned_result={"blocks": page_blocks},
+                    markdown_text=page_text,
+                )
+            )
+        return pages
+
+    def _layout_pages_from_blocks(self, document: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {
+                "prunedResult": page.pruned_result,
+                "markdown": {"text": page.markdown_text, "images": None},
+            }
+            for page in self._extract_pages_from_blocks(document)
+        ]
+
+    def _paragraphs_from_blocks(self, document: dict[str, Any]) -> list[dict[str, Any]]:
+        page_map = self._infer_block_pages(document.get("parsing_res_list") or [])
+        paragraphs: list[dict[str, Any]] = []
+        for block in self._text_blocks(document):
+            block_id = int(block.get("global_block_id", block.get("block_id", len(paragraphs))))
+            content = str(block.get("block_content") or "").strip()
+            paragraphs.append(
+                {
+                    "page": page_map.get(block_id, 1),
+                    "label": block.get("block_label") or "",
+                    "content": content,
+                    "bbox": block.get("block_bbox"),
+                    "global_block_id": block_id,
+                    "group_id": block.get("group_id"),
+                    "global_group_id": block.get("global_group_id"),
+                }
+            )
+        return paragraphs
+
+    def _text_blocks(self, document: dict[str, Any]) -> list[dict[str, Any]]:
+        blocks = document.get("parsing_res_list") or []
+        if not isinstance(blocks, list):
+            return []
+        text_blocks: list[dict[str, Any]] = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            label = str(block.get("block_label") or "")
+            content = str(block.get("block_content") or "").strip()
+            if not content or label in IGNORED_TEXT_BLOCK_LABELS:
+                continue
+            text_blocks.append(block)
+        return text_blocks
+
+    def _infer_block_pages(self, blocks: list[dict[str, Any]]) -> dict[int, int]:
+        page_map: dict[int, int] = {}
+        page = 0
+        prev_group_id = -1
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            block_id = int(block.get("global_block_id", block.get("block_id", 0)))
+            if block.get("page") is not None:
+                page_map[block_id] = int(block["page"])
+                continue
+
+            label = str(block.get("block_label") or "")
+            group_id = int(block.get("group_id") if block.get("group_id") is not None else 0)
+            if label in {"aside_text", "seal"}:
+                page_map[block_id] = page or 1
+                continue
+            if group_id <= prev_group_id and group_id == 0:
+                page += 1
+            if page == 0:
+                page = 1
+            page_map[block_id] = page
+            prev_group_id = group_id
+        return page_map
 
     def _result_to_layout_page(self, result: Any) -> dict[str, Any]:
         json_payload = getattr(result, "json", {}) or {}

@@ -7,11 +7,29 @@ from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
+RELATION_SPLIT_MODES = {"small_section", "chapter", "paragraph", "fixed_sections"}
+DEFAULT_RELATION_SPLIT_MODE = "small_section"
+DEFAULT_RELATION_BATCH_SIZE = 1
+DEFAULT_RELATION_MAX_BATCH_TOKENS = 2500
+DEFAULT_RELATION_INCLUDE_PARENT_TITLE = True
+
 
 def _as_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _as_int(value: str | None, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_relation_split_mode(value: str | None, default: str = DEFAULT_RELATION_SPLIT_MODE) -> str:
+    mode = str(value or default).strip()
+    return mode if mode in RELATION_SPLIT_MODES else default
 
 
 def _load_dotenv() -> None:
@@ -65,6 +83,10 @@ class AppConfig:
     skill4re_skip_coref: bool
     worker_poll_seconds: int
     debug: bool
+    relation_split_mode: str = DEFAULT_RELATION_SPLIT_MODE
+    relation_batch_size: int = DEFAULT_RELATION_BATCH_SIZE
+    relation_max_batch_tokens: int = DEFAULT_RELATION_MAX_BATCH_TOKENS
+    relation_include_parent_title: bool = DEFAULT_RELATION_INCLUDE_PARENT_TITLE
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -73,20 +95,20 @@ class AppConfig:
         repo_root = Path(__file__).resolve().parents[2]
         default_skill4re_skills_dir = repo_root / "skill4re" / "skill4re" / "skills"
         default_skill4re_route_cache = storage_root / "tmp" / "skill4re_route_cache.json"
-        vllm_model = os.getenv("VLLM_MODEL", "qwen")
+        vllm_model = os.getenv("VLLM_MODEL", "Qwen3-8B")
         return cls(
             api_host=os.getenv("API_HOST", "0.0.0.0"),
             api_port=int(os.getenv("API_PORT", "5000")),
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             storage_root=storage_root,
             paddle_ocr_mode=os.getenv("PADDLE_OCR_MODE", "python_api"),
-            paddle_ocr_base_url=os.getenv("PADDLE_OCR_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
-            paddle_ocr_server_url=os.getenv("PADDLE_OCR_SERVER_URL", "http://127.0.0.1:8118/v1").rstrip("/"),
-            paddle_ocr_api_model_name=os.getenv("PADDLE_OCR_API_MODEL_NAME", "PaddlePaddle/PaddleOCR-VL-1.5"),
+            paddle_ocr_base_url=os.getenv("PADDLE_OCR_BASE_URL", "http://192.168.1.2:8080").rstrip("/"),
+            paddle_ocr_server_url=os.getenv("PADDLE_OCR_SERVER_URL", "http://192.168.1.2:8080/v1").rstrip("/"),
+            paddle_ocr_api_model_name=os.getenv("PADDLE_OCR_API_MODEL_NAME", "PaddleOCR-VL-1.5-0.9B"),
             paddle_ocr_api_key=os.getenv("PADDLE_OCR_API_KEY", "EMPTY"),
             paddle_ocr_timeout_seconds=int(os.getenv("PADDLE_OCR_TIMEOUT_SECONDS", "180")),
             paddle_ocr_file_mode=os.getenv("PADDLE_OCR_FILE_MODE", "base64"),
-            vllm_base_url=os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8000/v1").rstrip("/"),
+            vllm_base_url=os.getenv("VLLM_BASE_URL", "http://192.168.1.2:9000/v1").rstrip("/"),
             vllm_api_key=os.getenv("VLLM_API_KEY", "EMPTY"),
             vllm_model=vllm_model,
             vllm_timeout_seconds=int(os.getenv("VLLM_TIMEOUT_SECONDS", "180")),
@@ -111,6 +133,19 @@ class AppConfig:
             skill4re_skip_coref=_as_bool(os.getenv("SKILL4RE_SKIP_COREF"), False),
             worker_poll_seconds=int(os.getenv("WORKER_POLL_SECONDS", "2")),
             debug=_as_bool(os.getenv("FLASK_ENV"), False),
+            relation_split_mode=_as_relation_split_mode(os.getenv("RELATION_SPLIT_MODE")),
+            relation_batch_size=_as_int(
+                os.getenv("RELATION_BATCH_SIZE", os.getenv("RELATION_SECTION_BATCH_SIZE")),
+                DEFAULT_RELATION_BATCH_SIZE,
+            ),
+            relation_max_batch_tokens=_as_int(
+                os.getenv("RELATION_MAX_BATCH_TOKENS"),
+                DEFAULT_RELATION_MAX_BATCH_TOKENS,
+            ),
+            relation_include_parent_title=_as_bool(
+                os.getenv("RELATION_INCLUDE_PARENT_TITLE"),
+                DEFAULT_RELATION_INCLUDE_PARENT_TITLE,
+            ),
         )
 
     def ensure_storage_dirs(self) -> None:
@@ -139,4 +174,8 @@ class AppConfig:
             "skill4re_max_workers": self.skill4re_max_workers,
             "skill4re_fast_mode": self.skill4re_fast_mode,
             "skill4re_skip_coref": self.skill4re_skip_coref,
+            "relation_split_mode": self.relation_split_mode,
+            "relation_batch_size": self.relation_batch_size,
+            "relation_max_batch_tokens": self.relation_max_batch_tokens,
+            "relation_include_parent_title": self.relation_include_parent_title,
         }
