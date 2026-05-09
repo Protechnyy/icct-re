@@ -82,7 +82,7 @@ class AppConfig:
             paddle_ocr_mode=os.getenv("PADDLE_OCR_MODE", "python_api"),
             paddle_ocr_base_url=os.getenv("PADDLE_OCR_BASE_URL", "http://127.0.0.1:8080").rstrip("/"),
             paddle_ocr_server_url=os.getenv("PADDLE_OCR_SERVER_URL", "http://127.0.0.1:8118/v1").rstrip("/"),
-            paddle_ocr_api_model_name=os.getenv("PADDLE_OCR_API_MODEL_NAME", "PaddlePaddle/PaddleOCR-VL-1.5"),
+            paddle_ocr_api_model_name=os.getenv("PADDLE_OCR_API_MODEL_NAME", "PaddleOCR-VL-1.5-0.9B"),
             paddle_ocr_api_key=os.getenv("PADDLE_OCR_API_KEY", "EMPTY"),
             paddle_ocr_timeout_seconds=int(os.getenv("PADDLE_OCR_TIMEOUT_SECONDS", "180")),
             paddle_ocr_file_mode=os.getenv("PADDLE_OCR_FILE_MODE", "base64"),
