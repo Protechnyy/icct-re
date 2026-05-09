@@ -1,0 +1,81 @@
+{
+  "name": "technology",
+  "description": "技术领域关系抽取，覆盖系统架构、接口依赖、故障分析、运维操作、性能指标等。",
+  "focus": "系统与组件关系、接口与数据流、故障与根因、运维操作与条件、性能监控与阈值。",
+  "head_prior": "系统、服务、模块、组件、API、数据库、中间件、故障、告警、操作。",
+  "tail_prior": "子系统、依赖服务、端口、协议、故障原因、影响范围、触发条件、阈值。",
+  "relation_style": "关系词精准，优先表达包含、依赖、调用、导致、触发、监控、阈值为等语义。",
+  "negative_scope": "不要输出笼统的 `使用` `支持` `涉及` 等泛关系，不要混入技术评价或建议。",
+  "extraction_rules": [
+    "系统架构：系统-子系统、模块-功能、组件-依赖关系要精确抽取。",
+    "接口与协议：API-调用方、协议-端口、数据流-方向要分别抽取。",
+    "故障分析：故障-原因、故障-影响范围、告警-故障关系要单列。",
+    "运维操作：操作-前置条件、变更-影响范围、回滚-触发条件要抽取。",
+    "性能指标：指标-阈值、指标-监控对象、SLA-服务关系要抽取。"
+  ],
+  "keywords": [
+    "系统",
+    "服务",
+    "模块",
+    "组件",
+    "微服务",
+    "容器",
+    "集群",
+    "API",
+    "接口",
+    "调用",
+    "依赖",
+    "数据流",
+    "消息队列",
+    "缓存",
+    "数据库",
+    "主从",
+    "分库分表",
+    "读写分离",
+    "事务",
+    "锁",
+    "故障",
+    "告警",
+    "宕机",
+    "超时",
+    "熔断",
+    "降级",
+    "限流",
+    "部署",
+    "发布",
+    "回滚",
+    "灰度",
+    "蓝绿部署",
+    "金丝雀",
+    "CPU",
+    "内存",
+    "磁盘",
+    "网络",
+    "QPS",
+    "RT",
+    "SLA",
+    "P99"
+  ],
+  "fewshot": [
+    {
+      "text": "订单服务依赖用户服务和库存服务。用户服务通过gRPC接口提供用户信息查询，库存服务通过REST API提供库存扣减。订单服务调用支付服务完成支付，支付服务依赖第三方支付网关。若支付网关超时，订单服务触发熔断机制。",
+      "json": "{\"relation_list\":[{\"head\":\"订单服务\",\"relation\":\"依赖\",\"tail\":\"用户服务\",\"evidence\":\"订单服务依赖用户服务和库存服务\",\"skill\":\"technology\"},{\"head\":\"订单服务\",\"relation\":\"依赖\",\"tail\":\"库存服务\",\"evidence\":\"订单服务依赖用户服务和库存服务\",\"skill\":\"technology\"},{\"head\":\"用户服务\",\"relation\":\"接口协议\",\"tail\":\"gRPC\",\"evidence\":\"用户服务通过gRPC接口提供用户信息查询\",\"skill\":\"technology\"},{\"head\":\"库存服务\",\"relation\":\"接口协议\",\"tail\":\"REST API\",\"evidence\":\"库存服务通过REST API提供库存扣减\",\"skill\":\"technology\"},{\"head\":\"订单服务\",\"relation\":\"调用\",\"tail\":\"支付服务\",\"evidence\":\"订单服务调用支付服务完成支付\",\"skill\":\"technology\"},{\"head\":\"支付服务\",\"relation\":\"依赖\",\"tail\":\"第三方支付网关\",\"evidence\":\"支付服务依赖第三方支付网关\",\"skill\":\"technology\"},{\"head\":\"支付网关超时\",\"relation\":\"触发\",\"tail\":\"熔断机制\",\"evidence\":\"若支付网关超时，订单服务触发熔断机制\",\"skill\":\"technology\"}]}"
+    },
+    {
+      "text": "MySQL主库宕机后，从库自动提升为主库，切换耗时约30秒。切换期间订单服务写入失败，触发告警。运维团队执行数据库故障切换SOP，确认数据一致性后恢复服务。根因分析显示主库磁盘空间耗尽导致宕机。",
+      "json": "{\"relation_list\":[{\"head\":\"MySQL主库\",\"relation\":\"故障\",\"tail\":\"宕机\",\"evidence\":\"MySQL主库宕机\",\"skill\":\"technology\"},{\"head\":\"从库\",\"relation\":\"提升为\",\"tail\":\"主库\",\"evidence\":\"从库自动提升为主库\",\"skill\":\"technology\"},{\"head\":\"主从切换\",\"relation\":\"耗时\",\"tail\":\"30秒\",\"evidence\":\"切换耗时约30秒\",\"skill\":\"technology\"},{\"head\":\"订单服务\",\"relation\":\"故障\",\"tail\":\"写入失败\",\"evidence\":\"切换期间订单服务写入失败\",\"skill\":\"technology\"},{\"head\":\"运维团队\",\"relation\":\"执行\",\"tail\":\"数据库故障切换SOP\",\"evidence\":\"运维团队执行数据库故障切换SOP\",\"skill\":\"technology\"},{\"head\":\"磁盘空间耗尽\",\"relation\":\"导致\",\"tail\":\"主库宕机\",\"evidence\":\"根因分析显示主库磁盘空间耗尽导致宕机\",\"skill\":\"technology\"}]}"
+    },
+    {
+      "text": "用户中心服务部署在K8s集群，副本数为3。CPU使用率超过80%触发HPA自动扩容，最大副本数10。内存使用率超过90%触发OOM Kill告警。服务健康检查路径为/health，端口8080，探针间隔10秒。",
+      "json": "{\"relation_list\":[{\"head\":\"用户中心服务\",\"relation\":\"部署\",\"tail\":\"K8s集群\",\"evidence\":\"用户中心服务部署在K8s集群\",\"skill\":\"technology\"},{\"head\":\"用户中心服务\",\"relation\":\"副本数\",\"tail\":\"3\",\"evidence\":\"副本数为3\",\"skill\":\"technology\"},{\"head\":\"CPU使用率超过80%\",\"relation\":\"触发\",\"tail\":\"HPA自动扩容\",\"evidence\":\"CPU使用率超过80%触发HPA自动扩容\",\"skill\":\"technology\"},{\"head\":\"HPA自动扩容\",\"relation\":\"最大副本数\",\"tail\":\"10\",\"evidence\":\"最大副本数10\",\"skill\":\"technology\"},{\"head\":\"内存使用率超过90%\",\"relation\":\"触发\",\"tail\":\"OOM Kill告警\",\"evidence\":\"内存使用率超过90%触发OOM Kill告警\",\"skill\":\"technology\"},{\"head\":\"健康检查\",\"relation\":\"路径\",\"tail\":\"/health\",\"evidence\":\"服务健康检查路径为/health\",\"skill\":\"technology\"}]}"
+    },
+    {
+      "text": "消息队列采用Kafka集群，3个broker节点。生产者将订单事件写入order-topic，消费者组order-consumer-group负责消费。若消费延迟超过5000条，触发告警。消息保留时间为72小时。",
+      "json": "{\"relation_list\":[{\"head\":\"消息队列\",\"relation\":\"采用\",\"tail\":\"Kafka集群\",\"evidence\":\"消息队列采用Kafka集群\",\"skill\":\"technology\"},{\"head\":\"Kafka集群\",\"relation\":\"节点数\",\"tail\":\"3个broker\",\"evidence\":\"3个broker节点\",\"skill\":\"technology\"},{\"head\":\"生产者\",\"relation\":\"写入\",\"tail\":\"order-topic\",\"evidence\":\"生产者将订单事件写入order-topic\",\"skill\":\"technology\"},{\"head\":\"order-consumer-group\",\"relation\":\"消费\",\"tail\":\"order-topic\",\"evidence\":\"消费者组order-consumer-group负责消费\",\"skill\":\"technology\"},{\"head\":\"消费延迟超过5000条\",\"relation\":\"触发\",\"tail\":\"告警\",\"evidence\":\"若消费延迟超过5000条，触发告警\",\"skill\":\"technology\"},{\"head\":\"消息\",\"relation\":\"保留时间\",\"tail\":\"72小时\",\"evidence\":\"消息保留时间为72小时\",\"skill\":\"technology\"}]}"
+    },
+    {
+      "text": "新版本发布采用蓝绿部署策略。发布前执行回归测试套件，覆盖率需达90%以上。发布后监控P99延迟，若超过200ms自动回滚。回滚触发后，运维需在15分钟内确认回滚完成。",
+      "json": "{\"relation_list\":[{\"head\":\"新版本发布\",\"relation\":\"部署策略\",\"tail\":\"蓝绿部署\",\"evidence\":\"新版本发布采用蓝绿部署策略\",\"skill\":\"technology\"},{\"head\":\"发布前\",\"relation\":\"执行\",\"tail\":\"回归测试套件\",\"evidence\":\"发布前执行回归测试套件\",\"skill\":\"technology\"},{\"head\":\"回归测试\",\"relation\":\"覆盖率要求\",\"tail\":\"90%以上\",\"evidence\":\"覆盖率需达90%以上\",\"skill\":\"technology\"},{\"head\":\"P99延迟超过200ms\",\"relation\":\"触发\",\"tail\":\"自动回滚\",\"evidence\":\"若超过200ms自动回滚\",\"skill\":\"technology\"},{\"head\":\"运维\",\"relation\":\"确认时限\",\"tail\":\"15分钟\",\"evidence\":\"运维需在15分钟内确认回滚完成\",\"skill\":\"technology\"}]}"
+    }
+  ]
+}

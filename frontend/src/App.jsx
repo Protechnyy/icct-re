@@ -1,6 +1,8 @@
-import { Layout, message, Typography } from "antd";
+import { Layout, message, Segmented } from "antd";
+import { FileSearchOutlined, SettingOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ResultViewer from "./components/ResultViewer";
+import SkillManager from "./components/SkillManager";
 import TaskTable from "./components/TaskTable";
 import UploadPanel from "./components/UploadPanel";
 import { getTaskResult, getTaskStatus, uploadFiles } from "./lib/api";
@@ -14,6 +16,7 @@ export default function App() {
   const [tasks, setTasks] = useState([]);
   const [results, setResults] = useState({});
   const [activeTaskId, setActiveTaskId] = useState(null);
+  const [view, setView] = useState("tasks");
 
   // Use refs to avoid recreating the polling interval when state changes
   const tasksRef = useRef(tasks);
@@ -100,8 +103,16 @@ export default function App() {
       <Header className="app-header">
         <div>
           <h1 className="app-header-title">Document RE Workbench</h1>
-          <div className="app-header-sub">PaddleOCR-VL + vLLM / Qwen 文档级关系抽取工作台</div>
+          <div className="app-header-sub">PaddleOCR-VL + Skill4RE + vLLM / Qwen 文档级关系抽取工作台</div>
         </div>
+        <Segmented
+          value={view}
+          onChange={setView}
+          options={[
+            { label: "任务", value: "tasks", icon: <FileSearchOutlined /> },
+            { label: "Skills", value: "skills", icon: <SettingOutlined /> },
+          ]}
+        />
       </Header>
       <Content className="app-content">
         <div className="grid">
@@ -120,10 +131,14 @@ export default function App() {
             />
           </aside>
           <main className="grid-main">
-            <ResultViewer
-              task={activeTask}
-              result={activeTaskId ? results[activeTaskId] : null}
-            />
+            {view === "skills" ? (
+              <SkillManager messageApi={messageApi} />
+            ) : (
+              <ResultViewer
+                task={activeTask}
+                result={activeTaskId ? results[activeTaskId] : null}
+              />
+            )}
           </main>
         </div>
       </Content>

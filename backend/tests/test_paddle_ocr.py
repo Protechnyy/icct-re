@@ -12,18 +12,32 @@ def build_config(tmp_path: Path) -> AppConfig:
         api_port=5000,
         redis_url="redis://localhost:6379/0",
         storage_root=tmp_path,
+        paddle_ocr_mode="python_api",
         paddle_ocr_base_url="http://localhost:8080",
+        paddle_ocr_server_url="http://localhost:8118/v1",
+        paddle_ocr_api_model_name="PaddleOCR-VL-1.5-0.9B",
+        paddle_ocr_api_key="EMPTY",
         paddle_ocr_timeout_seconds=10,
         paddle_ocr_file_mode="base64",
         vllm_base_url="http://localhost:8001/v1",
         vllm_api_key="EMPTY",
         vllm_model="qwen",
         vllm_timeout_seconds=10,
+        vllm_enable_thinking=False,
         ocr_concurrency=1,
         llm_concurrency=2,
         max_chunk_chars=1200,
         sentence_stage_limit=5,
         page_stage_limit=5,
+        skill4re_backend="vllm",
+        skill4re_model="qwen",
+        skill4re_skills_dir=tmp_path / "skills",
+        skill4re_route_cache_path=tmp_path / "skill4re_route_cache.json",
+        skill4re_chunk_trigger=1200,
+        skill4re_chunk_budget=900,
+        skill4re_max_workers=2,
+        skill4re_fast_mode=False,
+        skill4re_skip_coref=False,
         worker_poll_seconds=1,
         debug=False,
     )
@@ -66,4 +80,3 @@ def test_normalize_restructured_document_falls_back_to_page_text(tmp_path: Path)
     restructured = client.normalize_restructured_document({}, pages)
 
     assert restructured.markdown_text == "A\n\nB"
-

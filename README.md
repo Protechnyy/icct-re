@@ -5,14 +5,16 @@
 - **Flask API**：上传文档、查询任务状态、获取抽取结果
 - **Worker**：从 Redis 队列消费任务，串联 OCR → 分块 → 关系抽取流水线
 - **PaddleOCR-VL**：通过官方 Python API（`PaddleOCRVL`）调用本机 `genai_server` 完成版面解析与表格还原
-- **vLLM / Qwen**：作为关系抽取 LLM 后端，提供 OpenAI 兼容的 `chat/completions` 接口
+- **Skill4RE**：作为关系抽取框架，提供技能路由、长文档分块、结果合并和 `relation_list` JSON 输出
+- **vLLM / Qwen**：作为 Skill4RE 的 LLM 后端，提供 OpenAI 兼容的 `chat/completions` 接口
 - **React + Vite + Ant Design**：前端工作台，支持批量上传、轮询任务状态、查看分阶段抽取结果
 
 ## 目录结构
 
 - [backend/](backend/)：Flask API、Redis 任务存储、OCR/LLM 流水线、Worker
-  - [backend/app/](backend/app/)：核心模块（[api.py](backend/app/api.py)、[worker.py](backend/app/worker.py)、[pipeline.py](backend/app/pipeline.py)、[paddle_ocr.py](backend/app/paddle_ocr.py)、[vllm_client.py](backend/app/vllm_client.py)、[config.py](backend/app/config.py)）
+  - [backend/app/](backend/app/)：核心模块（[api.py](backend/app/api.py)、[worker.py](backend/app/worker.py)、[pipeline.py](backend/app/pipeline.py)、[skill4re_client.py](backend/app/skill4re_client.py)、[paddle_ocr.py](backend/app/paddle_ocr.py)、[vllm_client.py](backend/app/vllm_client.py)、[config.py](backend/app/config.py)）
   - [backend/run_api.py](backend/run_api.py)、[backend/run_worker.py](backend/run_worker.py)：API / Worker 启动入口
+- [skill4re/](skill4re/)：技能路由关系抽取框架与领域技能定义
 - [frontend/](frontend/)：React 单页工作台
 - [data/](data/)：上传文件与结果落盘目录（由 `STORAGE_ROOT` 控制）
 
@@ -98,11 +100,13 @@ vllm serve Qwen/Qwen3-32B-AWQ \
   --api-key EMPTY \
   --reasoning-parser qwen3 \
   --gpu-memory-utilization 0.92 \
-  --max-model-len 4096 \
+  --max-model-len 8192 \
   --max-num-seqs 16 \
   --max-num-batched-tokens 8192 \
   --enable-chunked-prefill \
-  --default-chat-template-kwargs '{"enable_thinking": false}'
+  --default-chat-template-kwargs '{"enable_thinking": false}' \
+  --kv-cache-dtype fp8_e5m2 \
+  --enable-prefix-caching
 ```
 
 启动后可用以下命令验证：
@@ -156,7 +160,11 @@ cp .env.example .env
 | `VLLM_ENABLE_THINKING` | `false` | 是否开启 Qwen 思考模式 |
 | `OCR_CONCURRENCY` / `LLM_CONCURRENCY` | `1` / `4` | OCR 与 LLM 并发度 |
 | `MAX_CHUNK_CHARS` | `2400` | 多页分块字符上限 |
-| `SENTENCE_STAGE_LIMIT` / `PAGE_STAGE_LIMIT` | `12` / `12` | 句子级 / 页级抽取上限 |
+| `SKILL4RE_BACKEND` | `vllm` | Skill4RE 推理后端，默认调用本项目的 vLLM OpenAI 兼容服务 |
+| `SKILL4RE_MODEL` | 同 `VLLM_MODEL` | Skill4RE 抽取模型名 |
+| `SKILL4RE_SKILLS_DIR` | `skill4re/skill4re/skills` | 技能定义 JSON 目录 |
+| `SKILL4RE_CHUNK_TRIGGER` / `SKILL4RE_CHUNK_BUDGET` | `1200` / `900` | Skill4RE 长文档分块阈值与预算 |
+| `SKILL4RE_FAST_MODE` / `SKILL4RE_SKIP_COREF` | `false` / `false` | 是否跳过 LLM 语义合并 / 是否跳过长文档共指消解 |
 
 3. 启动 API（开启另一个终端）
 
@@ -181,7 +189,7 @@ source .venv/bin/activate
 python run_worker.py
 ```
 
-Worker 会持续从 Redis 拉取任务并调用 [DocumentPipeline](backend/app/pipeline.py)：版面解析 → 结构化重排 → 句/页/多页三阶段关系抽取 → 去重合并。
+Worker 会持续从 Redis 拉取任务并调用 [DocumentPipeline](backend/app/pipeline.py)：版面解析 → 结构化重排 → Skill4RE 技能路由关系抽取 → `relation_list` JSON 输出。Worker 会在每次抽取前检测 `SKILL4RE_SKILLS_DIR` 下的 skill JSON 是否变更，前端新增或修改 skill 后，后续任务会自动使用最新配置。
 
 ## API 速览
 
@@ -191,8 +199,12 @@ Worker 会持续从 Redis 拉取任务并调用 [DocumentPipeline](backend/app/p
 | --- | --- | --- |
 | `POST` | `/api/upload` | 多文件上传，表单字段 `files`，返回创建的任务列表 |
 | `GET` | `/api/status/<task_id>` | 查询任务状态、阶段、进度 |
-| `GET` | `/api/result/<task_id>` | 任务完成后返回 OCR / 抽取完整结果 |
+| `GET` | `/api/result/<task_id>` | 任务完成后返回 OCR / 抽取完整结果，最终关系位于 `final_relations` 与 `final_relation_list.relation_list` |
 | `GET` | `/api/health` | Redis / PaddleOCR / vLLM 依赖健康检查 |
+| `GET` | `/api/skills` | 扫描并返回当前 Skill4RE skills |
+| `GET` | `/api/skills/<name>` | 读取单个 skill |
+| `POST` | `/api/skills` | 新增 skill，写入 `<name>.json` |
+| `PUT` | `/api/skills/<name>` | 修改 skill，若 `name` 变更会重命名 JSON 文件 |
 
 ## 前端启动
 
@@ -226,4 +238,4 @@ npm run preview    # 预览构建结果
 5. 后端 Worker：`python run_worker.py`
 6. 前端：`npm run dev`
 
-启动完成后访问 [http://localhost:5173](http://localhost:5173)，上传 PDF / 图片即可在右侧面板查看分阶段的关系抽取结果。
+启动完成后访问 [http://localhost:5173](http://localhost:5173)，上传 PDF / 图片即可在右侧面板查看 Skill4RE 路由、分块与最终 JSON 抽取结果。

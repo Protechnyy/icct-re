@@ -54,6 +54,15 @@ class AppConfig:
     max_chunk_chars: int
     sentence_stage_limit: int
     page_stage_limit: int
+    skill4re_backend: str
+    skill4re_model: str
+    skill4re_skills_dir: Path
+    skill4re_route_cache_path: Path
+    skill4re_chunk_trigger: int
+    skill4re_chunk_budget: int
+    skill4re_max_workers: int
+    skill4re_fast_mode: bool
+    skill4re_skip_coref: bool
     worker_poll_seconds: int
     debug: bool
 
@@ -61,6 +70,10 @@ class AppConfig:
     def from_env(cls) -> "AppConfig":
         _load_dotenv()
         storage_root = Path(os.getenv("STORAGE_ROOT", "../data")).expanduser().resolve()
+        repo_root = Path(__file__).resolve().parents[2]
+        default_skill4re_skills_dir = repo_root / "skill4re" / "skill4re" / "skills"
+        default_skill4re_route_cache = storage_root / "tmp" / "skill4re_route_cache.json"
+        vllm_model = os.getenv("VLLM_MODEL", "qwen")
         return cls(
             api_host=os.getenv("API_HOST", "0.0.0.0"),
             api_port=int(os.getenv("API_PORT", "5000")),
@@ -73,9 +86,9 @@ class AppConfig:
             paddle_ocr_api_key=os.getenv("PADDLE_OCR_API_KEY", "EMPTY"),
             paddle_ocr_timeout_seconds=int(os.getenv("PADDLE_OCR_TIMEOUT_SECONDS", "180")),
             paddle_ocr_file_mode=os.getenv("PADDLE_OCR_FILE_MODE", "base64"),
-            vllm_base_url=os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8001/v1").rstrip("/"),
+            vllm_base_url=os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8000/v1").rstrip("/"),
             vllm_api_key=os.getenv("VLLM_API_KEY", "EMPTY"),
-            vllm_model=os.getenv("VLLM_MODEL", "qwen"),
+            vllm_model=vllm_model,
             vllm_timeout_seconds=int(os.getenv("VLLM_TIMEOUT_SECONDS", "180")),
             vllm_enable_thinking=_as_bool(os.getenv("VLLM_ENABLE_THINKING"), False),
             ocr_concurrency=int(os.getenv("OCR_CONCURRENCY", "1")),
@@ -83,6 +96,19 @@ class AppConfig:
             max_chunk_chars=int(os.getenv("MAX_CHUNK_CHARS", "2400")),
             sentence_stage_limit=int(os.getenv("SENTENCE_STAGE_LIMIT", "12")),
             page_stage_limit=int(os.getenv("PAGE_STAGE_LIMIT", "12")),
+            skill4re_backend=os.getenv("SKILL4RE_BACKEND", "vllm"),
+            skill4re_model=os.getenv("SKILL4RE_MODEL", vllm_model),
+            skill4re_skills_dir=Path(
+                os.getenv("SKILL4RE_SKILLS_DIR", str(default_skill4re_skills_dir))
+            ).expanduser().resolve(),
+            skill4re_route_cache_path=Path(
+                os.getenv("SKILL4RE_ROUTE_CACHE_PATH", str(default_skill4re_route_cache))
+            ).expanduser().resolve(),
+            skill4re_chunk_trigger=int(os.getenv("SKILL4RE_CHUNK_TRIGGER", "1200")),
+            skill4re_chunk_budget=int(os.getenv("SKILL4RE_CHUNK_BUDGET", "900")),
+            skill4re_max_workers=int(os.getenv("SKILL4RE_MAX_WORKERS", os.getenv("LLM_CONCURRENCY", "4"))),
+            skill4re_fast_mode=_as_bool(os.getenv("SKILL4RE_FAST_MODE"), False),
+            skill4re_skip_coref=_as_bool(os.getenv("SKILL4RE_SKIP_COREF"), False),
             worker_poll_seconds=int(os.getenv("WORKER_POLL_SECONDS", "2")),
             debug=_as_bool(os.getenv("FLASK_ENV"), False),
         )
@@ -105,4 +131,12 @@ class AppConfig:
             "vllm_enable_thinking": self.vllm_enable_thinking,
             "ocr_concurrency": self.ocr_concurrency,
             "llm_concurrency": self.llm_concurrency,
+            "skill4re_backend": self.skill4re_backend,
+            "skill4re_model": self.skill4re_model,
+            "skill4re_skills_dir": str(self.skill4re_skills_dir),
+            "skill4re_chunk_trigger": self.skill4re_chunk_trigger,
+            "skill4re_chunk_budget": self.skill4re_chunk_budget,
+            "skill4re_max_workers": self.skill4re_max_workers,
+            "skill4re_fast_mode": self.skill4re_fast_mode,
+            "skill4re_skip_coref": self.skill4re_skip_coref,
         }

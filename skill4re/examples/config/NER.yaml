@@ -1,0 +1,14 @@
+model:
+  category: DeepSeek  # model category, chosen from ChatGPT, DeepSeek, LLaMA, Qwen, ChatGLM, MiniCPM, OneKE.
+  model_name_or_path: deepseek-chat # model name, chosen from the model list of the selected category.
+  api_key: your_api_key  # your API key for the model with API service. No need for open-source models.
+  base_url: https://api.deepseek.com # base URL for the API service. No need for open-source models.
+
+extraction:
+  task: NER
+  text: Finally , every other year , ELRA organizes a major conference LREC , the International Language Resources and Evaluation Conference .
+  constraint: ["algorithm", "conference", "else", "product", "task", "field", "metrics", "organization", "researcher", "program language", "country", "location", "person", "university"]
+  use_file: false
+  mode: quick
+  update_case: false
+  show_trajectory: false

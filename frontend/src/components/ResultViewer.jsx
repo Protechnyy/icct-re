@@ -55,6 +55,46 @@ export default function ResultViewer({ task, result }) {
 
   const isReady = Boolean(result);
   const statusLabel = task.status === "succeeded" ? "已完成" : task.status === "failed" ? "失败" : "处理中…";
+  const stageItems = result?.skill4re_result
+    ? [
+        {
+          key: "routing",
+          label: "路由",
+          children: <JsonBlock data={result.stage_outputs?.routing || {}} />,
+        },
+        {
+          key: "chunks",
+          label: "分块",
+          children: <JsonBlock data={result.stage_outputs?.chunk_predictions || []} />,
+        },
+        {
+          key: "prediction",
+          label: "抽取",
+          children: <JsonBlock data={result.stage_outputs?.prediction || { relation_list: [] }} />,
+        },
+        {
+          key: "timing",
+          label: "耗时",
+          children: <JsonBlock data={result.stage_outputs?.timing || {}} />,
+        },
+      ]
+    : [
+        {
+          key: "sentence",
+          label: "句级",
+          children: <JsonBlock data={result?.stage_outputs?.sentence || []} />,
+        },
+        {
+          key: "page",
+          label: "页级",
+          children: <JsonBlock data={result?.stage_outputs?.page || []} />,
+        },
+        {
+          key: "multipage",
+          label: "多页",
+          children: <JsonBlock data={result?.stage_outputs?.multipage || []} />,
+        },
+      ];
 
   return (
     <div className="panel">
@@ -93,27 +133,11 @@ export default function ResultViewer({ task, result }) {
       {!isReady ? (
         <Empty description={task.status === "failed" ? "任务执行失败" : "结果尚未就绪，请稍候…"} />
       ) : view === "final" ? (
-        <JsonBlock data={result.final_relations || []} />
+        <JsonBlock data={result.final_relation_list || { relation_list: result.final_relations || [] }} />
       ) : view === "stage" ? (
         <Tabs
           size="small"
-          items={[
-            {
-              key: "sentence",
-              label: "句级",
-              children: <JsonBlock data={result.stage_outputs?.sentence || []} />,
-            },
-            {
-              key: "page",
-              label: "页级",
-              children: <JsonBlock data={result.stage_outputs?.page || []} />,
-            },
-            {
-              key: "multipage",
-              label: "多页",
-              children: <JsonBlock data={result.stage_outputs?.multipage || []} />,
-            },
-          ]}
+          items={stageItems}
         />
       ) : (
         <JsonBlock

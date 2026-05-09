@@ -36,3 +36,35 @@ export async function getHealth() {
   }
   return response.json();
 }
+
+export async function listSkills() {
+  const response = await fetch(`${API_BASE_URL}/skills`);
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function createSkill(skill) {
+  const response = await fetch(`${API_BASE_URL}/skills`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(skill),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
+
+export async function updateSkill(name, skill) {
+  const response = await fetch(`${API_BASE_URL}/skills/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(skill),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}
