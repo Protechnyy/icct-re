@@ -21,7 +21,7 @@
 
 ## 快速启动
 
-首次准备后端配置：
+按下面顺序手动启动服务。首次准备后端配置：
 
 ```bash
 cd backend
@@ -32,19 +32,16 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-按需修改 `backend/.env`，然后在仓库根目录启动 API、Worker 和前端：
+按需修改 `backend/.env`，然后依次启动：
 
-```bash
-./start.sh
-```
+- Redis
+- PaddleOCR-VL
+- vLLM
+- 后端 API
+- 后端 Worker
+- 前端
 
-停止：
-
-```bash
-./start.sh stop
-```
-
-默认访问：[http://127.0.0.1:5173](http://127.0.0.1:5173)。日志写入 `data/tmp/`。
+默认访问：[http://127.0.0.1:5173](http://127.0.0.1:5173)。
 
 ## 启动 Redis
 
@@ -86,10 +83,9 @@ sudo docker run -d \
 
 后端通过 `PADDLE_OCR_SERVER_URL` 访问该服务。如需使用远程 OCR 服务，修改 `backend/.env` 或启动时传入环境变量：
 
-```bash
-PADDLE_OCR_BASE_URL=http://your-host:8118 \
-PADDLE_OCR_SERVER_URL=http://your-host:8118/v1 \
-./start.sh
+```env
+PADDLE_OCR_BASE_URL=http://your-host:8118
+PADDLE_OCR_SERVER_URL=http://your-host:8118/v1
 ```
 
 ## 启动 vLLM
