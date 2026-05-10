@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.config import AppConfig
-from app.pipeline import DocumentPipeline, _build_relation_batches, _build_relation_sections
+from app.pipeline import (
+    DocumentPipeline,
+    _build_relation_batches,
+    _build_relation_sections,
+    _strip_markdown_image_content,
+)
 
 
 class FakeTaskStore:
@@ -52,7 +57,11 @@ class FakeOcrClient:
 
 
 class FakeRelationExtractor:
+    def __init__(self) -> None:
+        self.inputs = []
+
     def extract_document(self, document_text: str):
+        self.inputs.append(document_text)
         return {
             "preprocess": {
                 "doc_token_count": len(document_text),
@@ -105,6 +114,37 @@ class FakeRelationExtractor:
                 ]
             },
         }
+
+
+class ImageMarkdownOcrClient(FakeOcrClient):
+    def extract_pages(self, layout_result):
+        from app.types import OcrPage
+
+        return [
+            OcrPage(
+                page_index=1,
+                pruned_result={"page": 1},
+                markdown_text=(
+                    "Alice joined ACME.\n\n"
+                    "![scan](data:image/png;base64,AAAA)\n\n"
+                    "<img src=\"data:image/png;base64,BBBB\" />"
+                ),
+            ),
+            OcrPage(page_index=2, pruned_result={"page": 2}, markdown_text="She manages Project Atlas."),
+        ]
+
+    def normalize_restructured_document(self, response, fallback_pages):
+        from app.types import RestructuredDocument
+
+        return RestructuredDocument(
+            markdown_text=(
+                "Alice joined ACME.\n\n"
+                "![diagram](figures/page-1.png)\n\n"
+                "<img alt=\"chart\" src=\"data:image/png;base64,CCCC\" />\n\n"
+                "She manages Project Atlas."
+            ),
+            layout_parsing_results=[],
+        )
 
 
 def build_config(tmp_path: Path) -> AppConfig:
@@ -172,6 +212,43 @@ def test_pipeline_falls_back_when_restructure_fails(tmp_path: Path) -> None:
     ]
     assert result["document_meta"]["extractor"] == "skill4re"
     assert result["document_text"].startswith("Alice joined ACME")
+
+
+def test_pipeline_strips_markdown_images_before_relation_extraction(tmp_path: Path) -> None:
+    extractor = FakeRelationExtractor()
+    pipeline = DocumentPipeline(build_config(tmp_path), FakeTaskStore(), ImageMarkdownOcrClient(), extractor)
+    file_path = tmp_path / "demo.pdf"
+    file_path.write_text("dummy", encoding="utf-8")
+
+    result = pipeline.process_task(
+        "task-1",
+        {"file_path": str(file_path), "filename": "demo.pdf", "file_type": 0},
+    )
+
+    extracted_input = "\n\n".join(extractor.inputs)
+    assert "Alice joined ACME." in extracted_input
+    assert "She manages Project Atlas." in extracted_input
+    assert "![" not in extracted_input
+    assert "<img" not in extracted_input
+    assert "data:image" not in extracted_input
+    assert "figures/page-1.png" not in extracted_input
+    assert "![" not in result["document_text"]
+    assert "![diagram]" in result["ocr_restructured"]["markdown_text"]
+
+
+def test_strip_markdown_image_content_removes_common_image_markup() -> None:
+    markdown = (
+        "甲方签署协议。\n\n"
+        "![扫描件](data:image/png;base64,AAAA)\n\n"
+        "<img src=\"attachment:image-1.png\" alt=\"scan\" />\n\n"
+        "![流程图][flow]\n\n"
+        "[flow]: images/flow.png\n\n"
+        "乙方负责交付。"
+    )
+
+    cleaned = _strip_markdown_image_content(markdown)
+
+    assert cleaned == "甲方签署协议。\n\n乙方负责交付。"
 
 
 def relation_config(split_mode: str, batch_size: int = 1, max_batch_tokens: int = 2500) -> dict:

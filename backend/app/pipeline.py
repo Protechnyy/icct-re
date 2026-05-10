@@ -25,6 +25,13 @@ if TYPE_CHECKING:
 RELATION_FIELD_ORDER = ("head", "relation", "tail", "evidence", "skill")
 NUMBERED_SECTION_RE = re.compile(r"^(?P<section_id>\d+(?:[.．]\d+)+)\s*(?P<title>.*)$")
 CHINESE_SECTION_RE = re.compile(r"^(?P<section_id>[一二三四五六七八九十百千万]+)、")
+MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\(\s*(?:<[^>\n]*>|[^)\n]*)\s*\)")
+MARKDOWN_REFERENCE_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\[[^\]\n]*\]")
+MARKDOWN_IMAGE_DEFINITION_RE = re.compile(
+    r"(?im)^[ \t]*\[[^\]\n]+\]:[ \t]*(?:data:image/[^ \t\n]+|(?:\.{0,2}/)?(?:images?|figures?|assets?)/\S+|attachment:\S+).*$"
+)
+HTML_IMAGE_RE = re.compile(r"<img\b[^>]*>", re.IGNORECASE | re.DOTALL)
+DATA_IMAGE_RE = re.compile(r"data:image/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+")
 
 
 class DocumentPipeline:
@@ -61,8 +68,10 @@ class DocumentPipeline:
             restructure_fallback = True
             restructured = self.ocr_client.normalize_restructured_document({}, ocr_pages)
 
-        page_texts = [(page.page_index, page.markdown_text) for page in ocr_pages]
-        document_text = restructured.markdown_text.strip() or "\n\n".join(text for _, text in page_texts if text.strip())
+        page_texts = [(page.page_index, _strip_markdown_image_content(page.markdown_text)) for page in ocr_pages]
+        document_text = _strip_markdown_image_content(restructured.markdown_text)
+        if not document_text:
+            document_text = "\n\n".join(text for _, text in page_texts if text.strip())
         chunks = [Chunk(**chunk) for chunk in chunk_text_with_page_map(page_texts, self.config.max_chunk_chars)]
         relation_split_config = _relation_split_config(self.config, payload)
         relation_sections = _build_relation_sections(
@@ -323,6 +332,21 @@ def _build_relation_sections(markdown_text: str, include_parent_title: bool = Tr
     if current is not None:
         sections.append(_finalize_relation_section(current))
     return [section for section in sections if section["text"]]
+
+
+def _strip_markdown_image_content(markdown_text: Any) -> str:
+    text = str(markdown_text or "")
+    if not text:
+        return ""
+    text = HTML_IMAGE_RE.sub("", text)
+    text = MARKDOWN_IMAGE_RE.sub("", text)
+    text = MARKDOWN_REFERENCE_IMAGE_RE.sub("", text)
+    text = MARKDOWN_IMAGE_DEFINITION_RE.sub("", text)
+    text = DATA_IMAGE_RE.sub("", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _markdown_paragraphs(markdown_text: str) -> list[str]:
