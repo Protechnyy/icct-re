@@ -106,7 +106,7 @@ vllm serve Qwen/Qwen3-32B-AWQ \
   --api-key EMPTY \
   --reasoning-parser qwen3 \
   --gpu-memory-utilization 0.92 \
-  --max-model-len 8192 \
+  --max-model-len 4096 \
   --max-num-seqs 16 \
   --max-num-batched-tokens 8192 \
   --enable-chunked-prefill \
