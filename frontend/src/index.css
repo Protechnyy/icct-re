@@ -181,6 +181,34 @@ body {
 }
 
 /* ===== Upload ===== */
+.relation-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.relation-option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.relation-option-label {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.relation-option-row .ant-segmented {
+  min-width: 0;
+}
+
+.relation-option-row .ant-segmented-group {
+  flex-wrap: wrap;
+}
+
 .upload-dropzone {
   border: 2px dashed var(--border-warm);
   background: var(--ivory);

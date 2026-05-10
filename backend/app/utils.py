@@ -4,7 +4,7 @@ import base64
 import json
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,7 @@ SUPPORTED_UPLOAD_SUFFIXES = {".pdf", *SUPPORTED_IMAGE_SUFFIXES}
 
 
 def utcnow_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def generate_task_id() -> str:

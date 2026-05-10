@@ -98,10 +98,10 @@ class SkillRouterExtractor:
     def _get_max_tokens(self, task_type: str) -> int:
         """根据任务类型获取 max_tokens 配置。"""
         token_configs = {
-            "extraction": {"local_qwen3": 800, "qwen_api": 2200, "vllm": 1800, "default": 4200},
-            "proofreading": {"local_qwen3": 1400, "qwen_api": 2600, "vllm": 1600, "default": 3600},
-            "summarize": {"local_qwen3": 2000, "qwen_api": 3000, "vllm": 1800, "default": 4000},
-            "targeted_proofread": {"local_qwen3": 1000, "qwen_api": 1800, "vllm": 1200, "default": 2400},
+            "extraction": {"local_qwen3": 800, "qwen_api": 2200, "vllm": 900, "default": 4200},
+            "proofreading": {"local_qwen3": 1400, "qwen_api": 2600, "vllm": 700, "default": 3600},
+            "summarize": {"local_qwen3": 2000, "qwen_api": 3000, "vllm": 900, "default": 4000},
+            "targeted_proofread": {"local_qwen3": 1000, "qwen_api": 1800, "vllm": 600, "default": 2400},
         }
         config = token_configs.get(task_type, token_configs["extraction"])
         return config.get(self.backend, config["default"])

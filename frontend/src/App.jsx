@@ -12,6 +12,10 @@ const { Header, Content } = Layout;
 export default function App() {
   const [messageApi, contextHolder] = message.useMessage();
   const [fileList, setFileList] = useState([]);
+  const [relationOptions, setRelationOptions] = useState({
+    split_mode: "small_section",
+    batch_size: 1,
+  });
   const [submitting, setSubmitting] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [results, setResults] = useState({});
@@ -66,7 +70,7 @@ export default function App() {
     if (!rawFiles.length) return;
     try {
       setSubmitting(true);
-      const response = await uploadFiles(rawFiles);
+      const response = await uploadFiles(rawFiles, relationOptions);
       setTasks((current) => {
         const merged = [...response.tasks, ...current];
         return merged;
@@ -123,6 +127,8 @@ export default function App() {
               onSubmit={handleUpload}
               onRemove={handleRemove}
               submitting={submitting}
+              relationOptions={relationOptions}
+              onRelationOptionsChange={setRelationOptions}
             />
             <TaskTable
               tasks={tasks}

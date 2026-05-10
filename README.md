@@ -11,13 +11,40 @@
 
 ## 服务依赖
 
-本项目本地开发默认使用以下服务：
+默认开发环境使用：
 
-- Redis：任务队列和状态存储，默认 `redis://localhost:6379/0`
-- PaddleOCR-VL genai_server：OCR 和版面解析，默认 `http://127.0.0.1:8118/v1`
-- vLLM / Qwen：关系抽取推理，默认 `http://127.0.0.1:8000/v1`
+- Redis：`redis://localhost:6379/0`
+- PaddleOCR-VL OpenAI 兼容服务：`http://127.0.0.1:8118/v1`
+- vLLM / Qwen OpenAI 兼容服务：`http://127.0.0.1:8000/v1`
 
-基本环境要求：Linux、NVIDIA GPU、Python 3.10+、Node.js 18+、Docker、NVIDIA Container Toolkit。
+基本环境要求：Linux、Python 3.10+、Node.js 18+、Redis。若本机启动 PaddleOCR-VL / vLLM，还需要 NVIDIA GPU、Docker 和 NVIDIA Container Toolkit。
+
+## 快速启动
+
+首次准备后端配置：
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+按需修改 `backend/.env`，然后在仓库根目录启动 API、Worker 和前端：
+
+```bash
+./start.sh
+```
+
+停止：
+
+```bash
+./start.sh stop
+```
+
+默认访问：[http://127.0.0.1:5173](http://127.0.0.1:5173)。日志写入 `data/tmp/`。
 
 ## 启动 Redis
 
@@ -57,11 +84,17 @@ sudo docker run -d \
     --backend vllm
 ```
 
-后端通过 `PADDLE_OCR_SERVER_URL` 访问该服务。如需调整端口或模型，同步修改 [backend/.env.example](backend/.env.example) 中的配置。
+后端通过 `PADDLE_OCR_SERVER_URL` 访问该服务。如需使用远程 OCR 服务，修改 `backend/.env` 或启动时传入环境变量：
+
+```bash
+PADDLE_OCR_BASE_URL=http://your-host:8118 \
+PADDLE_OCR_SERVER_URL=http://your-host:8118/v1 \
+./start.sh
+```
 
 ## 启动 vLLM
 
-关系抽取阶段默认使用 Qwen3-32B-AWQ。建议把 vLLM 安装在独立虚拟环境中，避免与后端依赖冲突：
+关系抽取阶段默认使用 OpenAI 兼容接口。示例：
 
 ```bash
 source ~/venvs/vllm-qwen/bin/activate
@@ -88,30 +121,29 @@ vllm serve Qwen/Qwen3-32B-AWQ \
 curl http://127.0.0.1:8000/v1/models -H "Authorization: Bearer EMPTY"
 ```
 
-显存不足时可更换更小模型，并同步修改 `backend/.env` 的 `VLLM_MODEL`。
+显存不足时可更换更小模型，并同步修改 `backend/.env` 的 `VLLM_MODEL` 和 `SKILL4RE_MODEL`。
 
-## 启动后端
+## 关系抽取粒度
 
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-pip install -r requirements.txt
-cp .env.example .env
+上传时可选择关系抽取粒度，后端会把配置保存到任务 payload 并在结果中返回 `relation_split_config`、`relation_sections` 和 `relation_batches`。
+
+支持模式：
+
+- `small_section`：按 `1.1`、`4.4` 等小节切分，默认
+- `chapter`：按 `一、`、`二、` 等大章切分
+- `paragraph`：按 Markdown 段落切分
+- `fixed_sections`：每 N 个小节一批
+
+默认配置在 [backend/.env.example](backend/.env.example)：
+
+```env
+RELATION_SPLIT_MODE=small_section
+RELATION_BATCH_SIZE=1
+RELATION_MAX_BATCH_TOKENS=2500
+RELATION_INCLUDE_PARENT_TITLE=true
 ```
 
-按需修改 `backend/.env` 中的服务地址、模型名和并发参数。常用项：
-
-- `REDIS_URL`
-- `PADDLE_OCR_SERVER_URL`
-- `PADDLE_OCR_API_MODEL_NAME`
-- `VLLM_BASE_URL`
-- `VLLM_MODEL`
-- `OCR_CONCURRENCY`
-- `LLM_CONCURRENCY`
-
-启动 API：
+## 手动启动后端
 
 ```bash
 cd backend
@@ -119,7 +151,7 @@ source .venv/bin/activate
 python run_api.py
 ```
 
-启动 Worker：
+另开终端启动 Worker：
 
 ```bash
 cd backend
@@ -133,7 +165,7 @@ python run_worker.py
 curl http://127.0.0.1:5000/api/health
 ```
 
-## 启动前端
+## 手动启动前端
 
 ```bash
 cd frontend
@@ -141,7 +173,7 @@ npm install
 npm run dev
 ```
 
-默认访问地址：[http://localhost:5173](http://localhost:5173)。Vite 会把 `/api` 代理到 `http://127.0.0.1:5000`，因此前端默认不需要 `.env` 或 `.env.example`。
+前端默认使用 `/api`，Vite 会把请求代理到 `http://127.0.0.1:5000`，因此默认不需要 `.env` 或 `.env.example`。
 
 如需指向远程后端：
 
@@ -160,14 +192,3 @@ VITE_API_BASE_URL=http://your-host:5000/api npm run dev
 | `GET` | `/api/skills` | 获取 Skill4RE skill 列表 |
 | `POST` | `/api/skills` | 新增 skill |
 | `PUT` | `/api/skills/<name>` | 修改 skill |
-
-## 推荐启动顺序
-
-1. Redis：`sudo docker start docre-redis`
-2. PaddleOCR-VL：`sudo docker start docre-paddleocr`
-3. vLLM：启动 `vllm serve`
-4. 后端 API：`python run_api.py`
-5. 后端 Worker：`python run_worker.py`
-6. 前端：`npm run dev`
-
-全部启动后，在 [http://localhost:5173](http://localhost:5173) 上传文档并查看抽取结果。

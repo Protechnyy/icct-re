@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.config import AppConfig
-from app.pipeline import DocumentPipeline
+from app.pipeline import DocumentPipeline, _build_relation_batches, _build_relation_sections
 
 
 class FakeTaskStore:
@@ -36,7 +36,7 @@ class FakeOcrClient:
             OcrPage(page_index=2, pruned_result={"page": 2}, markdown_text="She manages Project Atlas."),
         ]
 
-    def build_restructure_payload(self, ocr_pages):
+    def build_restructure_payload(self, ocr_pages, layout_result=None):
         return [{"prunedResult": page.pruned_result, "markdownImages": None} for page in ocr_pages]
 
     def restructure_pages(self, pages):
@@ -157,8 +157,13 @@ def test_pipeline_falls_back_when_restructure_fails(tmp_path: Path) -> None:
     assert result["ocr_summary"]["ocr_restructure_fallback"] is True
     assert len(result["final_relations"]) == 2
     assert result["final_relation_list"]["relation_list"][0]["head"] == "Alice"
-    assert list(result["final_relations"][0].keys()) == ["head", "relation", "tail", "evidence", "skill"]
-    assert list(result["stage_outputs"]["prediction"]["relation_list"][0].keys()) == [
+    assert list(result["final_relations"][0].keys())[:5] == ["head", "relation", "tail", "evidence", "skill"]
+    assert result["final_relations"][0]["source_sections"] == ["section-001"]
+    assert result["relation_split_config"]["split_mode"] == "small_section"
+    assert result["relation_split_config"]["batch_size"] == 1
+    assert result["ocr_summary"]["relation_batch_count"] == 1
+    assert result["relation_batches"][0]["section_ids"] == ["section-001"]
+    assert list(result["stage_outputs"]["prediction"]["relation_list"][0].keys())[:5] == [
         "head",
         "relation",
         "tail",
@@ -167,3 +172,74 @@ def test_pipeline_falls_back_when_restructure_fails(tmp_path: Path) -> None:
     ]
     assert result["document_meta"]["extractor"] == "skill4re"
     assert result["document_text"].startswith("Alice joined ACME")
+
+
+def relation_config(split_mode: str, batch_size: int = 1, max_batch_tokens: int = 2500) -> dict:
+    return {
+        "split_mode": split_mode,
+        "batch_size": batch_size,
+        "max_batch_tokens": max_batch_tokens,
+        "include_parent_title": True,
+    }
+
+
+def sample_numbered_document() -> str:
+    return (
+        "一、战区背景与态势\n\n"
+        "1.1 第一小节\n\n"
+        "A 单位抵达甲地。\n\n"
+        "1.2 第二小节\n\n"
+        "B 单位支援乙地。\n\n"
+        "1.3 第三小节\n\n"
+        "C 单位保障丙地。\n\n"
+        "二、任务目标\n\n"
+        "2.1 第一目标\n\n"
+        "D 单位控制丁地。"
+    )
+
+
+def test_relation_small_section_defaults_to_one_section_per_batch() -> None:
+    sections = _build_relation_sections(sample_numbered_document())
+
+    batches = _build_relation_batches(sections, relation_config("small_section"))
+
+    assert [batch["section_ids"] for batch in batches] == [["1.1"], ["1.2"], ["1.3"], ["2.1"]]
+    assert batches[0]["split_mode"] == "small_section"
+    assert batches[0]["parent_title"] == "一、战区背景与态势"
+    assert batches[0]["text"].startswith("一、战区背景与态势\n\n1.1 第一小节")
+
+
+def test_relation_chapter_mode_groups_numbered_sections() -> None:
+    sections = _build_relation_sections(sample_numbered_document())
+
+    batches = _build_relation_batches(sections, relation_config("chapter"))
+
+    assert [batch["section_ids"] for batch in batches] == [["1.1", "1.2", "1.3"], ["2.1"]]
+    assert batches[0]["split_mode"] == "chapter"
+    assert batches[0]["parent_title"] == "一、战区背景与态势"
+
+
+def test_relation_fixed_sections_batch_size_two_is_preserved() -> None:
+    sections = _build_relation_sections(sample_numbered_document())
+
+    batches = _build_relation_batches(sections, relation_config("fixed_sections", batch_size=2))
+
+    assert [batch["section_ids"] for batch in batches] == [["1.1", "1.2"], ["1.3", "2.1"]]
+    assert all(batch["split_mode"] == "fixed_sections" for batch in batches)
+
+
+def test_relation_batches_auto_split_when_token_limit_is_exceeded() -> None:
+    markdown = (
+        "一、超长章节\n\n"
+        "1.1 超长小节\n\n"
+        f"{'甲' * 80}\n\n"
+        "1.2 短小节\n\n"
+        "乙方抵达。"
+    )
+    sections = _build_relation_sections(markdown)
+
+    batches = _build_relation_batches(sections, relation_config("chapter", max_batch_tokens=10))
+
+    assert all(batch["estimated_tokens"] <= 10 for batch in batches)
+    assert any(batch["split_mode"] == "hard_split" for batch in batches)
+    assert any(batch["section_ids"] == ["1.2"] for batch in batches)

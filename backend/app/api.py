@@ -6,7 +6,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from .config import AppConfig
+from .config import AppConfig, RELATION_SPLIT_MODES
 from .paddle_ocr import PaddleOcrClient
 from .skill_store import SkillStore, SkillStoreError
 from .task_store import RedisTaskStore
@@ -42,6 +42,10 @@ def create_app() -> Flask:
         files = request.files.getlist("files")
         if not files:
             return jsonify({"error": "No files uploaded"}), 400
+        try:
+            relation_split_config = _relation_split_config_from_form(request.form, config)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
 
         tasks = []
         for file_storage in files:
@@ -69,6 +73,7 @@ def create_app() -> Flask:
                 "filename": filename,
                 "stored_filename": target.name,
                 "file_type": file_type,
+                "relation_split_config": relation_split_config,
             }
             task_store.create_task(status, payload)
             task_store.enqueue_task(task_id)
@@ -154,3 +159,54 @@ def create_app() -> Flask:
 
 def _target_path(storage_root: Path, task_id: str, filename: str) -> Path:
     return storage_root / "uploads" / task_id / filename
+
+
+def _relation_split_config_from_form(form: object, config: AppConfig) -> dict[str, object]:
+    split_mode = str(_form_value(form, "split_mode", "relation_split_mode") or config.relation_split_mode).strip()
+    if split_mode not in RELATION_SPLIT_MODES:
+        raise ValueError(f"Unsupported relation split_mode: {split_mode}")
+
+    batch_size = _positive_int(
+        _form_value(form, "batch_size", "relation_batch_size"),
+        config.relation_batch_size,
+        "batch_size",
+    )
+    max_batch_tokens = _positive_int(
+        _form_value(form, "max_batch_tokens", "relation_max_batch_tokens"),
+        config.relation_max_batch_tokens,
+        "max_batch_tokens",
+    )
+    include_parent_title = _bool_value(
+        _form_value(form, "include_parent_title", "relation_include_parent_title"),
+        config.relation_include_parent_title,
+    )
+
+    return {
+        "split_mode": split_mode,
+        "batch_size": batch_size,
+        "max_batch_tokens": max_batch_tokens,
+        "include_parent_title": include_parent_title,
+    }
+
+
+def _form_value(form: object, *keys: str) -> str | None:
+    for key in keys:
+        value = form.get(key) if hasattr(form, "get") else None
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _positive_int(value: str | None, default: int, field_name: str) -> int:
+    if value is None:
+        return max(1, int(default))
+    try:
+        return max(1, int(value))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a positive integer") from exc
+
+
+def _bool_value(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
