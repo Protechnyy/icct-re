@@ -1,5 +1,5 @@
 import { DeleteOutlined, FileImageOutlined, FilePdfOutlined, FileTextOutlined, InboxOutlined } from "@ant-design/icons";
-import { Button, Space, Tag, Typography } from "antd";
+import { Button, InputNumber, Segmented, Space, Tag, Typography } from "antd";
 import { useCallback, useRef, useState } from "react";
 
 function formatSize(bytes) {
@@ -16,9 +16,28 @@ function fileIcon(file) {
   return <FileTextOutlined />;
 }
 
-export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, submitting }) {
+export default function UploadPanel({
+  fileList,
+  onChange,
+  onSubmit,
+  onRemove,
+  submitting,
+  relationOptions,
+  onRelationOptionsChange,
+}) {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef(null);
+  const splitMode = relationOptions?.split_mode || "small_section";
+  const batchSize = relationOptions?.batch_size || 1;
+
+  const updateRelationOptions = useCallback((next) => {
+    onRelationOptionsChange?.({
+      split_mode: splitMode,
+      batch_size: batchSize,
+      ...relationOptions,
+      ...next,
+    });
+  }, [batchSize, onRelationOptionsChange, relationOptions, splitMode]);
 
   const makeFileItem = (file) => ({
     uid: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -55,6 +74,40 @@ export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, su
         <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
           支持 PDF 和常见图片格式，批量上传后会自动创建独立任务。
         </Typography.Paragraph>
+      </div>
+
+      <div className="relation-options">
+        <div className="relation-option-row">
+          <Typography.Text className="relation-option-label">抽取粒度</Typography.Text>
+          <Segmented
+            size="small"
+            value={splitMode}
+            onChange={(value) =>
+              updateRelationOptions({
+                split_mode: value,
+                batch_size: value === "fixed_sections" ? batchSize : 1,
+              })
+            }
+            options={[
+              { label: "小节", value: "small_section" },
+              { label: "大章", value: "chapter" },
+              { label: "段落", value: "paragraph" },
+              { label: "固定 N", value: "fixed_sections" },
+            ]}
+          />
+        </div>
+        {splitMode === "fixed_sections" ? (
+          <div className="relation-option-row">
+            <Typography.Text className="relation-option-label">每批数量</Typography.Text>
+            <InputNumber
+              min={1}
+              max={3}
+              value={batchSize}
+              onChange={(value) => updateRelationOptions({ batch_size: value || 1 })}
+              size="small"
+            />
+          </div>
+        ) : null}
       </div>
 
       <div

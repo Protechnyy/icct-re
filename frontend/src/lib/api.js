@@ -1,8 +1,14 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 
-export async function uploadFiles(fileList) {
+export async function uploadFiles(fileList, relationOptions = {}) {
   const formData = new FormData();
   fileList.forEach((file) => formData.append("files", file));
+  if (relationOptions.split_mode) {
+    formData.append("split_mode", relationOptions.split_mode);
+  }
+  if (relationOptions.batch_size) {
+    formData.append("batch_size", String(relationOptions.batch_size));
+  }
   const response = await fetch(`${API_BASE_URL}/upload`, {
     method: "POST",
     body: formData,
