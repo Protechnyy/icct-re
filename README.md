@@ -15,7 +15,7 @@
 
 - Redis：`redis://localhost:6379/0`
 - PaddleOCR-VL OpenAI 兼容服务：`http://127.0.0.1:8118/v1`
-- vLLM / Qwen OpenAI 兼容服务：`http://127.0.0.1:8000/v1`
+- 关系抽取 Qwen OpenAI 兼容服务：默认使用远程 `https://api.asukalangely.top/v1/chat/completions`；也可切换为本地 vLLM `http://127.0.0.1:8000/v1`
 
 基本环境要求：Linux、Python 3.10+、Node.js 18+、Redis。若本机启动 PaddleOCR-VL / vLLM，还需要 NVIDIA GPU、Docker 和 NVIDIA Container Toolkit。
 
@@ -36,7 +36,7 @@ cp .env.example .env
 
 - Redis
 - PaddleOCR-VL
-- vLLM
+- 远程 Qwen API key，或本地 vLLM
 - 后端 API
 - 后端 Worker
 - 前端
@@ -88,9 +88,28 @@ PADDLE_OCR_BASE_URL=http://your-host:8118
 PADDLE_OCR_SERVER_URL=http://your-host:8118/v1
 ```
 
-## 启动 vLLM
+## 关系抽取 Qwen API
 
-关系抽取阶段默认使用 OpenAI 兼容接口。示例：
+默认交付配置使用已经部署好的远程 Qwen3-32B-BF16 OpenAI 兼容接口。复制 `backend/.env.example` 为 `backend/.env` 后，只需要把 `VLLM_API_KEY` 改成有效 key；不需要启动本地 vLLM。
+
+```env
+VLLM_BASE_URL=https://api.asukalangely.top/v1/chat/completions
+VLLM_API_KEY=你的_api_key
+VLLM_MODEL=Qwen3-32B-BF16
+VLLM_MAX_RETRIES=3
+VLLM_RETRY_BACKOFF_SECONDS=2
+SKILL4RE_BACKEND=vllm
+SKILL4RE_MODEL=Qwen3-32B-BF16
+VLLM_ENABLE_THINKING=false
+```
+
+`VLLM_BASE_URL` 既可以填写完整的 `/v1/chat/completions` 地址，也可以填写去掉 `/chat/completions` 后的 `/v1` base URL；后端会在请求关系抽取时自动规整。
+
+远程服务偶发 `502`、`503`、`504` 或 `429` 时，关系抽取请求会按 `VLLM_MAX_RETRIES` 和 `VLLM_RETRY_BACKOFF_SECONDS` 做短重试；如果重试后仍失败，说明远程 API 上游服务不可用，需要稍后重跑任务或联系 API 服务提供方。
+
+## 可选：启动本地 vLLM
+
+如果不使用远程 API，也可以本地启动 vLLM。示例：
 
 ```bash
 source ~/venvs/vllm-qwen/bin/activate

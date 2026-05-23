@@ -33,6 +33,14 @@ def _as_relation_split_mode(value: str | None, default: str = DEFAULT_RELATION_S
     return mode if mode in RELATION_SPLIT_MODES else default
 
 
+def normalize_openai_base_url(value: str) -> str:
+    url = value.strip().rstrip("/")
+    suffix = "/chat/completions"
+    if url.endswith(suffix):
+        return url[: -len(suffix)].rstrip("/")
+    return url
+
+
 def _load_dotenv() -> None:
     env_path = Path(__file__).resolve().parent.parent / ".env"
     if not env_path.exists():
@@ -114,7 +122,7 @@ class AppConfig:
             ),
             paddle_ocr_timeout_seconds=int(os.getenv("PADDLE_OCR_TIMEOUT_SECONDS", "180")),
             paddle_ocr_file_mode=os.getenv("PADDLE_OCR_FILE_MODE", "base64"),
-            vllm_base_url=os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8000/v1").rstrip("/"),
+            vllm_base_url=normalize_openai_base_url(os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8000/v1")),
             vllm_api_key=os.getenv("VLLM_API_KEY", "EMPTY"),
             vllm_model=vllm_model,
             vllm_timeout_seconds=int(os.getenv("VLLM_TIMEOUT_SECONDS", "180")),

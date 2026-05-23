@@ -3,7 +3,7 @@ from __future__ import annotations
 import requests
 from typing import Any
 
-from .config import AppConfig
+from .config import AppConfig, normalize_openai_base_url
 from .utils import extract_json_array
 
 
@@ -18,7 +18,33 @@ class VllmClient:
 
     def healthcheck(self) -> bool:
         try:
-            response = self.session.get(f"{self.config.vllm_base_url}/models", timeout=5, headers=self._headers())
+            response = self.session.get(f"{self._base_url()}/models", timeout=5, headers=self._headers())
+            if response.ok:
+                return True
+            if response.status_code not in {404, 405}:
+                return False
+            return self._chat_completion_healthcheck()
+        except requests.RequestException:
+            return False
+
+    def _chat_completion_healthcheck(self) -> bool:
+        payload = {
+            "model": self.config.vllm_model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "temperature": 0,
+            "max_tokens": 1,
+            "stream": False,
+            "chat_template_kwargs": {
+                "enable_thinking": self.config.vllm_enable_thinking,
+            },
+        }
+        try:
+            response = self.session.post(
+                f"{self._base_url()}/chat/completions",
+                json=payload,
+                headers=self._headers(),
+                timeout=min(10, self.config.vllm_timeout_seconds),
+            )
             return response.ok
         except requests.RequestException:
             return False
@@ -44,7 +70,7 @@ class VllmClient:
         }
         try:
             response = self.session.post(
-                f"{self.config.vllm_base_url}/chat/completions",
+                f"{self._base_url()}/chat/completions",
                 json=payload,
                 headers=self._headers(),
                 timeout=self.config.vllm_timeout_seconds,
@@ -67,3 +93,6 @@ class VllmClient:
             "Authorization": f"Bearer {self.config.vllm_api_key}",
             "Content-Type": "application/json",
         }
+
+    def _base_url(self) -> str:
+        return normalize_openai_base_url(self.config.vllm_base_url)

@@ -1,5 +1,7 @@
 import json
+import os
 import re
+import time
 from typing import Dict, Optional, Tuple
 
 try:
@@ -37,6 +39,7 @@ RELATION_LIST_RESPONSE_FORMAT: Dict = {
         },
     },
 }
+RETRYABLE_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 ROUTER_RESPONSE_FORMAT: Dict = {
     "type": "json_schema",
@@ -152,6 +155,66 @@ def build_backend(
     return client, local_generator
 
 
+def normalize_openai_base_url(base_url: str) -> str:
+    resolved = base_url.strip().rstrip("/")
+    suffix = "/chat/completions"
+    if resolved.endswith(suffix):
+        return resolved[: -len(suffix)].rstrip("/")
+    return resolved
+
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default)).strip()))
+    except (AttributeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
+    try:
+        return max(minimum, float(os.getenv(name, str(default)).strip()))
+    except (AttributeError, ValueError):
+        return default
+
+
+def _compact_response_text(text: str, limit: int = 500) -> str:
+    if not text:
+        return ""
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", text, flags=re.IGNORECASE | re.DOTALL)
+    if title_match:
+        text = title_match.group(1)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit]
+
+
+def _retry_delay_seconds(response, attempt: int, base_delay: float) -> float:
+    retry_after = response.headers.get("Retry-After") if response is not None else None
+    if retry_after:
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            pass
+    return base_delay * attempt
+
+
+def _raise_api_status_error(response) -> None:
+    import requests
+
+    body = _compact_response_text(response.text)
+    content_type = response.headers.get("content-type", "")
+    ray_id = response.headers.get("cf-ray") or response.headers.get("CF-Ray")
+    details = [
+        f"{response.status_code} Server Error for url: {response.url}",
+        f"content-type={content_type or 'unknown'}",
+    ]
+    if ray_id:
+        details.append(f"cf-ray={ray_id}")
+    if body:
+        details.append(f"body={body}")
+    raise requests.HTTPError("; ".join(details), response=response)
+
+
 def generate_text(
     prompt: str,
     backend: str,
@@ -194,7 +257,7 @@ def generate_text_with_requests(
     import requests
 
     if base_url:
-        resolved_base_url = base_url.rstrip("/")
+        resolved_base_url = normalize_openai_base_url(base_url)
     elif backend == "qwen_api":
         resolved_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     elif backend == "api":
@@ -224,15 +287,37 @@ def generate_text_with_requests(
     if response_format is not None and backend in {"openai", "qwen_api"}:
         data["response_format"] = response_format
 
-    response = requests.post(
-        f"{resolved_base_url}/chat/completions",
-        headers=headers,
-        json=data,
-        timeout=timeout,
+    max_retries = _env_int("VLLM_MAX_RETRIES", _env_int("SKILL4RE_API_MAX_RETRIES", 3))
+    retry_backoff_seconds = _env_float(
+        "VLLM_RETRY_BACKOFF_SECONDS",
+        _env_float("SKILL4RE_API_RETRY_BACKOFF_SECONDS", 2.0),
     )
-    if response.status_code != 200:
-        print(f"API Error: {response.status_code}")
-        print(f"Response: {response.text}")
-    response.raise_for_status()
+    url = f"{resolved_base_url}/chat/completions"
+    last_exception = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=data,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            last_exception = exc
+            if attempt >= max_retries:
+                raise
+            time.sleep(retry_backoff_seconds * attempt)
+            continue
+
+        if response.ok:
+            break
+        if response.status_code not in RETRYABLE_HTTP_STATUS_CODES or attempt >= max_retries:
+            _raise_api_status_error(response)
+        time.sleep(_retry_delay_seconds(response, attempt, retry_backoff_seconds))
+    else:
+        if last_exception is not None:
+            raise last_exception
+        raise RuntimeError(f"API request failed for url: {url}")
+
     result = response.json()
     return result["choices"][0]["message"]["content"]
