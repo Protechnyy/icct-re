@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -142,7 +144,10 @@ class DocumentPipeline:
 
         batch_results: list[dict[str, Any]] = []
         all_relations: list[dict[str, Any]] = []
-        for batch in relation_batches:
+        batch_concurrency = max(1, min(self.config.relation_batch_concurrency, len(relation_batches)))
+        batch_extraction_started_at = time.perf_counter()
+
+        def extract_batch(batch: dict[str, Any]) -> dict[str, Any]:
             batch_result = _order_relation_payload(self.relation_extractor.extract_document(batch["text"]))
             prediction = batch_result.get("prediction", {})
             relation_list = prediction.get("relation_list", []) if isinstance(prediction, dict) else []
@@ -151,21 +156,29 @@ class DocumentPipeline:
                 for item in relation_list
                 if isinstance(item, dict)
             ]
-            all_relations.extend(batch_relations)
-            batch_results.append(
-                {
-                    "batch_index": batch["batch_index"],
-                    "split_mode": batch["split_mode"],
-                    "section_ids": batch["section_ids"],
-                    "parent_title": batch["parent_title"],
-                    "page_start": batch["page_start"],
-                    "page_end": batch["page_end"],
-                    "block_ids": batch["block_ids"],
-                    "estimated_tokens": batch["estimated_tokens"],
-                    "result": batch_result,
-                    "relations": batch_relations,
-                }
-            )
+            return {
+                "batch_index": batch["batch_index"],
+                "split_mode": batch["split_mode"],
+                "section_ids": batch["section_ids"],
+                "parent_title": batch["parent_title"],
+                "page_start": batch["page_start"],
+                "page_end": batch["page_end"],
+                "block_ids": batch["block_ids"],
+                "estimated_tokens": batch["estimated_tokens"],
+                "result": batch_result,
+                "relations": batch_relations,
+            }
+
+        if batch_concurrency == 1:
+            batch_results = [extract_batch(batch) for batch in relation_batches]
+        else:
+            with ThreadPoolExecutor(max_workers=batch_concurrency) as executor:
+                futures = [executor.submit(extract_batch, batch) for batch in relation_batches]
+                batch_results = [future.result() for future in as_completed(futures)]
+
+        batch_results.sort(key=lambda item: item["batch_index"])
+        for batch_result in batch_results:
+            all_relations.extend(batch_result["relations"])
 
         final_relations = _dedupe_relations(all_relations)
         skill4re_result = _combine_batch_skill4re_results(
@@ -174,6 +187,11 @@ class DocumentPipeline:
             relation_sections,
             relation_split_config,
         )
+        skill4re_result.setdefault("timing", {})["wall_seconds"] = round(
+            time.perf_counter() - batch_extraction_started_at,
+            4,
+        )
+        skill4re_result.setdefault("preprocess", {})["relation_batch_concurrency"] = batch_concurrency
         prediction = skill4re_result.get("prediction", {})
         stage_outputs = {
             "routing": skill4re_result.get("routing", {}),

@@ -101,7 +101,7 @@ export default function UploadPanel({
             <Typography.Text className="relation-option-label">每批数量</Typography.Text>
             <InputNumber
               min={1}
-              max={3}
+              max={18}
               value={batchSize}
               onChange={(value) => updateRelationOptions({ batch_size: value || 1 })}
               size="small"

@@ -156,7 +156,10 @@ RELATION_SPLIT_MODE=small_section
 RELATION_BATCH_SIZE=1
 RELATION_MAX_BATCH_TOKENS=2500
 RELATION_INCLUDE_PARENT_TITLE=true
+RELATION_BATCH_CONCURRENCY=10
 ```
+
+`RELATION_BATCH_CONCURRENCY` 控制同一文档内关系抽取 batch 的并发数。默认保留 `small_section` 细粒度以保证召回，同时用并发 10 降低远程 API 的总等待时间；如果上游服务不稳定，可以临时改为 `8`、`6` 或更低。
 
 ## 手动启动后端
 

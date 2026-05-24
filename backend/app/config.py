@@ -12,6 +12,7 @@ DEFAULT_RELATION_SPLIT_MODE = "small_section"
 DEFAULT_RELATION_BATCH_SIZE = 1
 DEFAULT_RELATION_MAX_BATCH_TOKENS = 2500
 DEFAULT_RELATION_INCLUDE_PARENT_TITLE = True
+DEFAULT_RELATION_BATCH_CONCURRENCY = 10
 DEFAULT_PADDLE_OCR_MAX_CONCURRENCY = 4
 
 
@@ -97,6 +98,7 @@ class AppConfig:
     relation_batch_size: int = DEFAULT_RELATION_BATCH_SIZE
     relation_max_batch_tokens: int = DEFAULT_RELATION_MAX_BATCH_TOKENS
     relation_include_parent_title: bool = DEFAULT_RELATION_INCLUDE_PARENT_TITLE
+    relation_batch_concurrency: int = DEFAULT_RELATION_BATCH_CONCURRENCY
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -160,6 +162,10 @@ class AppConfig:
                 os.getenv("RELATION_INCLUDE_PARENT_TITLE"),
                 DEFAULT_RELATION_INCLUDE_PARENT_TITLE,
             ),
+            relation_batch_concurrency=_as_int(
+                os.getenv("RELATION_BATCH_CONCURRENCY"),
+                DEFAULT_RELATION_BATCH_CONCURRENCY,
+            ),
         )
 
     def ensure_storage_dirs(self) -> None:
@@ -193,4 +199,5 @@ class AppConfig:
             "relation_batch_size": self.relation_batch_size,
             "relation_max_batch_tokens": self.relation_max_batch_tokens,
             "relation_include_parent_title": self.relation_include_parent_title,
+            "relation_batch_concurrency": self.relation_batch_concurrency,
         }
