@@ -10,6 +10,9 @@ LOGGER = logging.getLogger(__name__)
 RELATION_SPLIT_MODES = {"small_section", "chapter", "paragraph", "fixed_sections"}
 DEFAULT_RELATION_SPLIT_MODE = "small_section"
 DEFAULT_RELATION_BATCH_SIZE = 1
+DEFAULT_RELATION_CHAPTER_BATCH_SIZE = 2
+DEFAULT_RELATION_PARAGRAPH_BATCH_SIZE = 5
+DEFAULT_RELATION_FIXED_SECTION_BATCH_SIZE = DEFAULT_RELATION_BATCH_SIZE
 DEFAULT_RELATION_MAX_BATCH_TOKENS = 2500
 DEFAULT_RELATION_INCLUDE_PARENT_TITLE = True
 DEFAULT_RELATION_BATCH_CONCURRENCY = 10
@@ -96,6 +99,9 @@ class AppConfig:
     paddle_ocr_max_concurrency: int = DEFAULT_PADDLE_OCR_MAX_CONCURRENCY
     relation_split_mode: str = DEFAULT_RELATION_SPLIT_MODE
     relation_batch_size: int = DEFAULT_RELATION_BATCH_SIZE
+    relation_chapter_batch_size: int = DEFAULT_RELATION_CHAPTER_BATCH_SIZE
+    relation_paragraph_batch_size: int = DEFAULT_RELATION_PARAGRAPH_BATCH_SIZE
+    relation_fixed_section_batch_size: int = DEFAULT_RELATION_FIXED_SECTION_BATCH_SIZE
     relation_max_batch_tokens: int = DEFAULT_RELATION_MAX_BATCH_TOKENS
     relation_include_parent_title: bool = DEFAULT_RELATION_INCLUDE_PARENT_TITLE
     relation_batch_concurrency: int = DEFAULT_RELATION_BATCH_CONCURRENCY
@@ -154,6 +160,21 @@ class AppConfig:
                 os.getenv("RELATION_BATCH_SIZE", os.getenv("RELATION_SECTION_BATCH_SIZE")),
                 DEFAULT_RELATION_BATCH_SIZE,
             ),
+            relation_chapter_batch_size=_as_int(
+                os.getenv("RELATION_CHAPTER_BATCH_SIZE"),
+                DEFAULT_RELATION_CHAPTER_BATCH_SIZE,
+            ),
+            relation_paragraph_batch_size=_as_int(
+                os.getenv("RELATION_PARAGRAPH_BATCH_SIZE"),
+                DEFAULT_RELATION_PARAGRAPH_BATCH_SIZE,
+            ),
+            relation_fixed_section_batch_size=_as_int(
+                os.getenv(
+                    "RELATION_FIXED_SECTION_BATCH_SIZE",
+                    os.getenv("RELATION_BATCH_SIZE", os.getenv("RELATION_SECTION_BATCH_SIZE")),
+                ),
+                DEFAULT_RELATION_FIXED_SECTION_BATCH_SIZE,
+            ),
             relation_max_batch_tokens=_as_int(
                 os.getenv("RELATION_MAX_BATCH_TOKENS"),
                 DEFAULT_RELATION_MAX_BATCH_TOKENS,
@@ -197,6 +218,9 @@ class AppConfig:
             "skill4re_skip_coref": self.skill4re_skip_coref,
             "relation_split_mode": self.relation_split_mode,
             "relation_batch_size": self.relation_batch_size,
+            "relation_chapter_batch_size": self.relation_chapter_batch_size,
+            "relation_paragraph_batch_size": self.relation_paragraph_batch_size,
+            "relation_fixed_section_batch_size": self.relation_fixed_section_batch_size,
             "relation_max_batch_tokens": self.relation_max_batch_tokens,
             "relation_include_parent_title": self.relation_include_parent_title,
             "relation_batch_concurrency": self.relation_batch_concurrency,

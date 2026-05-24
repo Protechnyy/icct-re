@@ -9,8 +9,11 @@ from typing import TYPE_CHECKING, Any
 
 from .config import (
     DEFAULT_RELATION_BATCH_SIZE,
+    DEFAULT_RELATION_CHAPTER_BATCH_SIZE,
+    DEFAULT_RELATION_FIXED_SECTION_BATCH_SIZE,
     DEFAULT_RELATION_INCLUDE_PARENT_TITLE,
     DEFAULT_RELATION_MAX_BATCH_TOKENS,
+    DEFAULT_RELATION_PARAGRAPH_BATCH_SIZE,
     DEFAULT_RELATION_SPLIT_MODE,
     RELATION_SPLIT_MODES,
     AppConfig,
@@ -242,7 +245,45 @@ def _relation_split_config(config: AppConfig, payload: dict[str, Any]) -> dict[s
         _first_config_value(payload_config, payload, ("batch_size", "relation_batch_size"), config.relation_batch_size),
         config.relation_batch_size,
     )
-    if split_mode != "fixed_sections":
+    chapter_batch_size = _positive_int_config_value(
+        _first_config_value(
+            payload_config,
+            payload,
+            ("chapter_batch_size", "relation_chapter_batch_size"),
+            config.relation_chapter_batch_size,
+        ),
+        config.relation_chapter_batch_size,
+    )
+    paragraph_batch_size = _positive_int_config_value(
+        _first_config_value(
+            payload_config,
+            payload,
+            ("paragraph_batch_size", "relation_paragraph_batch_size"),
+            config.relation_paragraph_batch_size,
+        ),
+        config.relation_paragraph_batch_size,
+    )
+    fixed_section_batch_size = _positive_int_config_value(
+        _first_config_value(
+            payload_config,
+            payload,
+            (
+                "fixed_section_batch_size",
+                "relation_fixed_section_batch_size",
+                "batch_size",
+                "relation_batch_size",
+            ),
+            config.relation_fixed_section_batch_size,
+        ),
+        config.relation_fixed_section_batch_size,
+    )
+    if split_mode == "chapter":
+        batch_size = chapter_batch_size
+    elif split_mode == "paragraph":
+        batch_size = paragraph_batch_size
+    elif split_mode == "fixed_sections":
+        batch_size = fixed_section_batch_size
+    else:
         batch_size = 1
     max_batch_tokens = _positive_int_config_value(
         _first_config_value(
@@ -265,6 +306,9 @@ def _relation_split_config(config: AppConfig, payload: dict[str, Any]) -> dict[s
     return {
         "split_mode": split_mode,
         "batch_size": batch_size,
+        "chapter_batch_size": chapter_batch_size,
+        "paragraph_batch_size": paragraph_batch_size,
+        "fixed_section_batch_size": fixed_section_batch_size,
         "max_batch_tokens": max_batch_tokens,
         "include_parent_title": include_parent_title,
     }
@@ -446,22 +490,37 @@ def _build_relation_batches(sections: list[dict[str, Any]], split_config: dict[s
         split_config = {
             "split_mode": "fixed_sections",
             "batch_size": split_config,
+            "chapter_batch_size": DEFAULT_RELATION_CHAPTER_BATCH_SIZE,
+            "paragraph_batch_size": DEFAULT_RELATION_PARAGRAPH_BATCH_SIZE,
+            "fixed_section_batch_size": split_config,
             "max_batch_tokens": DEFAULT_RELATION_MAX_BATCH_TOKENS,
             "include_parent_title": DEFAULT_RELATION_INCLUDE_PARENT_TITLE,
         }
     split_mode = _clean_relation_split_mode(split_config.get("split_mode"), DEFAULT_RELATION_SPLIT_MODE)
     batch_size = _positive_int_config_value(split_config.get("batch_size"), DEFAULT_RELATION_BATCH_SIZE)
+    chapter_batch_size = _positive_int_config_value(
+        split_config.get("chapter_batch_size"),
+        DEFAULT_RELATION_CHAPTER_BATCH_SIZE,
+    )
+    paragraph_batch_size = _positive_int_config_value(
+        split_config.get("paragraph_batch_size"),
+        DEFAULT_RELATION_PARAGRAPH_BATCH_SIZE,
+    )
+    fixed_section_batch_size = _positive_int_config_value(
+        split_config.get("fixed_section_batch_size", batch_size),
+        DEFAULT_RELATION_FIXED_SECTION_BATCH_SIZE,
+    )
     max_batch_tokens = _positive_int_config_value(
         split_config.get("max_batch_tokens"),
         DEFAULT_RELATION_MAX_BATCH_TOKENS,
     )
 
     if split_mode == "chapter":
-        batches = _build_chapter_relation_batches(sections)
+        batches = _build_chapter_relation_batches(sections, chapter_batch_size)
     elif split_mode == "paragraph":
-        batches = _build_paragraph_relation_batches(sections)
+        batches = _build_paragraph_relation_batches(sections, paragraph_batch_size)
     elif split_mode == "fixed_sections":
-        batches = _build_section_relation_batches(sections, batch_size, "fixed_sections")
+        batches = _build_section_relation_batches(sections, fixed_section_batch_size, "fixed_sections")
     else:
         batches = _build_section_relation_batches(sections, 1, "small_section")
 
@@ -503,10 +562,20 @@ def _build_section_relation_batches(
     return [batch for batch in batches if batch.get("text")]
 
 
-def _build_chapter_relation_batches(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_chapter_relation_batches(sections: list[dict[str, Any]], batch_size: int = 1) -> list[dict[str, Any]]:
     batches: list[dict[str, Any]] = []
-    for chapter_title, chapter_sections in _chapter_section_groups(sections):
-        batches.append(_make_relation_batch(chapter_sections, "chapter", parent_title=chapter_title))
+    chapter_groups = _chapter_section_groups(sections)
+    for start in range(0, len(chapter_groups), max(1, batch_size)):
+        group_chunk = chapter_groups[start : start + max(1, batch_size)]
+        chapter_titles = [title for title, _ in group_chunk if title]
+        chapter_sections = [section for _, group_sections in group_chunk for section in group_sections]
+        batches.append(
+            _make_relation_batch(
+                chapter_sections,
+                "chapter",
+                parent_title=" / ".join(chapter_titles) if len(chapter_titles) > 1 else (chapter_titles[0] if chapter_titles else ""),
+            )
+        )
     return [batch for batch in batches if batch.get("text")]
 
 
@@ -538,11 +607,38 @@ def _chapter_section_groups(sections: list[dict[str, Any]]) -> list[tuple[str, l
     return groups
 
 
-def _build_paragraph_relation_batches(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    batches: list[dict[str, Any]] = []
+def _build_paragraph_relation_batches(sections: list[dict[str, Any]], batch_size: int = 1) -> list[dict[str, Any]]:
+    paragraph_batches: list[dict[str, Any]] = []
     for section in sections:
-        batches.extend(_paragraph_batches_for_section(section))
-    return batches
+        paragraph_batches.extend(_paragraph_batches_for_section(section))
+    if batch_size <= 1:
+        return paragraph_batches
+    return _group_existing_relation_batches(paragraph_batches, batch_size, "paragraph")
+
+
+def _group_existing_relation_batches(
+    batches: list[dict[str, Any]],
+    batch_size: int,
+    split_mode: str,
+) -> list[dict[str, Any]]:
+    grouped_batches: list[dict[str, Any]] = []
+    for start in range(0, len(batches), max(1, batch_size)):
+        batch_group = batches[start : start + max(1, batch_size)]
+        sections = [
+            section
+            for batch in batch_group
+            for section in batch.get("sections", [])
+            if isinstance(section, dict)
+        ]
+        text = "\n\n".join(str(batch.get("text") or "").strip() for batch in batch_group if batch.get("text")).strip()
+        grouped = _make_relation_batch(sections, split_mode, text=text)
+        grouped["section_ids"] = _unique_values(
+            section_id
+            for batch in batch_group
+            for section_id in batch.get("section_ids", [])
+        )
+        grouped_batches.append(grouped)
+    return [batch for batch in grouped_batches if batch.get("text")]
 
 
 def _paragraph_batches_for_section(section: dict[str, Any]) -> list[dict[str, Any]]:

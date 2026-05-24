@@ -251,10 +251,20 @@ def test_strip_markdown_image_content_removes_common_image_markup() -> None:
     assert cleaned == "甲方签署协议。\n\n乙方负责交付。"
 
 
-def relation_config(split_mode: str, batch_size: int = 1, max_batch_tokens: int = 2500) -> dict:
+def relation_config(
+    split_mode: str,
+    batch_size: int = 1,
+    max_batch_tokens: int = 2500,
+    chapter_batch_size: int | None = None,
+    paragraph_batch_size: int | None = None,
+    fixed_section_batch_size: int | None = None,
+) -> dict:
     return {
         "split_mode": split_mode,
         "batch_size": batch_size,
+        **({} if chapter_batch_size is None else {"chapter_batch_size": chapter_batch_size}),
+        **({} if paragraph_batch_size is None else {"paragraph_batch_size": paragraph_batch_size}),
+        **({} if fixed_section_batch_size is None else {"fixed_section_batch_size": fixed_section_batch_size}),
         "max_batch_tokens": max_batch_tokens,
         "include_parent_title": True,
     }
@@ -289,17 +299,59 @@ def test_relation_small_section_defaults_to_one_section_per_batch() -> None:
 def test_relation_chapter_mode_groups_numbered_sections() -> None:
     sections = _build_relation_sections(sample_numbered_document())
 
-    batches = _build_relation_batches(sections, relation_config("chapter"))
+    batches = _build_relation_batches(sections, relation_config("chapter", chapter_batch_size=1))
 
     assert [batch["section_ids"] for batch in batches] == [["1.1", "1.2", "1.3"], ["2.1"]]
     assert batches[0]["split_mode"] == "chapter"
     assert batches[0]["parent_title"] == "一、战区背景与态势"
 
 
+def test_relation_chapter_mode_honors_chapter_batch_size() -> None:
+    markdown = (
+        "一、第一章\n\n"
+        "1.1 第一节\n\n"
+        "A 单位抵达甲地。\n\n"
+        "二、第二章\n\n"
+        "2.1 第二节\n\n"
+        "B 单位抵达乙地。\n\n"
+        "三、第三章\n\n"
+        "3.1 第三节\n\n"
+        "C 单位抵达丙地。"
+    )
+    sections = _build_relation_sections(markdown)
+
+    batches = _build_relation_batches(sections, relation_config("chapter", chapter_batch_size=2))
+
+    assert [batch["section_ids"] for batch in batches] == [["1.1", "2.1"], ["3.1"]]
+    assert batches[0]["parent_title"] == "一、第一章 / 二、第二章"
+
+
+def test_relation_paragraph_mode_honors_paragraph_batch_size() -> None:
+    markdown = (
+        "一、第一章\n\n"
+        "1.1 第一节\n\n"
+        "A 单位抵达甲地。\n\n"
+        "B 单位抵达乙地。\n\n"
+        "C 单位抵达丙地。\n\n"
+        "1.2 第二节\n\n"
+        "D 单位抵达丁地。\n\n"
+        "E 单位抵达戊地。"
+    )
+    sections = _build_relation_sections(markdown)
+
+    batches = _build_relation_batches(sections, relation_config("paragraph", paragraph_batch_size=2))
+
+    assert [batch["section_ids"] for batch in batches] == [["1.1"], ["1.1", "1.2"], ["1.2"]]
+    assert all(batch["split_mode"] == "paragraph" for batch in batches)
+
+
 def test_relation_fixed_sections_batch_size_two_is_preserved() -> None:
     sections = _build_relation_sections(sample_numbered_document())
 
-    batches = _build_relation_batches(sections, relation_config("fixed_sections", batch_size=2))
+    batches = _build_relation_batches(
+        sections,
+        relation_config("fixed_sections", fixed_section_batch_size=2),
+    )
 
     assert [batch["section_ids"] for batch in batches] == [["1.1", "1.2"], ["1.3", "2.1"]]
     assert all(batch["split_mode"] == "fixed_sections" for batch in batches)

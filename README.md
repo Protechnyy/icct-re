@@ -154,10 +154,15 @@ curl http://127.0.0.1:8000/v1/models -H "Authorization: Bearer EMPTY"
 ```env
 RELATION_SPLIT_MODE=small_section
 RELATION_BATCH_SIZE=1
+RELATION_CHAPTER_BATCH_SIZE=2
+RELATION_PARAGRAPH_BATCH_SIZE=5
+RELATION_FIXED_SECTION_BATCH_SIZE=1
 RELATION_MAX_BATCH_TOKENS=2500
 RELATION_INCLUDE_PARENT_TITLE=true
 RELATION_BATCH_CONCURRENCY=10
 ```
+
+`RELATION_CHAPTER_BATCH_SIZE` 控制 `chapter` 模式下每批合并几个大章；`RELATION_PARAGRAPH_BATCH_SIZE` 控制 `paragraph` 模式下每批合并几个段落；`RELATION_FIXED_SECTION_BATCH_SIZE` 控制 `fixed_sections` 模式下每批合并几个小节。旧的 `RELATION_BATCH_SIZE` 保留为 fixed sections 的兼容别名。
 
 `RELATION_BATCH_CONCURRENCY` 控制同一文档内关系抽取 batch 的并发数。默认保留 `small_section` 细粒度以保证召回，同时用并发 10 降低远程 API 的总等待时间；如果上游服务不稳定，可以临时改为 `8`、`6` 或更低。
 

@@ -171,6 +171,27 @@ def _relation_split_config_from_form(form: object, config: AppConfig) -> dict[st
         config.relation_batch_size,
         "batch_size",
     )
+    chapter_batch_size = _positive_int(
+        _form_value(form, "chapter_batch_size", "relation_chapter_batch_size"),
+        config.relation_chapter_batch_size,
+        "chapter_batch_size",
+    )
+    paragraph_batch_size = _positive_int(
+        _form_value(form, "paragraph_batch_size", "relation_paragraph_batch_size"),
+        config.relation_paragraph_batch_size,
+        "paragraph_batch_size",
+    )
+    fixed_section_batch_size = _positive_int(
+        _form_value(
+            form,
+            "fixed_section_batch_size",
+            "relation_fixed_section_batch_size",
+            "batch_size",
+            "relation_batch_size",
+        ),
+        config.relation_fixed_section_batch_size,
+        "fixed_section_batch_size",
+    )
     max_batch_tokens = _positive_int(
         _form_value(form, "max_batch_tokens", "relation_max_batch_tokens"),
         config.relation_max_batch_tokens,
@@ -184,6 +205,9 @@ def _relation_split_config_from_form(form: object, config: AppConfig) -> dict[st
     return {
         "split_mode": split_mode,
         "batch_size": batch_size,
+        "chapter_batch_size": chapter_batch_size,
+        "paragraph_batch_size": paragraph_batch_size,
+        "fixed_section_batch_size": fixed_section_batch_size,
         "max_batch_tokens": max_batch_tokens,
         "include_parent_title": include_parent_title,
     }
