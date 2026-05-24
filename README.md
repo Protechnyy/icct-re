@@ -14,7 +14,7 @@
 默认开发环境使用：
 
 - Redis：`redis://localhost:6379/0`
-- PaddleOCR-VL OpenAI 兼容服务：`http://127.0.0.1:8118/v1`
+- OCR 版面解析服务：默认使用远程 `http://47.108.239.169:31583/layout-parsing`；也可切换为本地 PaddleOCR-VL `http://127.0.0.1:8118/v1`
 - 关系抽取 Qwen OpenAI 兼容服务：默认使用远程 `https://api.asukalangely.top/v1/chat/completions`；也可切换为本地 vLLM `http://127.0.0.1:8000/v1`
 
 基本环境要求：Linux、Python 3.10+、Node.js 18+、Redis。若本机启动 PaddleOCR-VL / vLLM，还需要 NVIDIA GPU、Docker 和 NVIDIA Container Toolkit。
@@ -65,7 +65,7 @@ sudo docker restart docre-redis
 
 ## 启动 PaddleOCR-VL
 
-Worker 启动前需要先运行 PaddleOCR-VL `genai_server`：
+默认配置会请求远程 OCR 服务，不需要在本机启动 PaddleOCR-VL。如果需要改回本地 Docker 部署的 PaddleOCR-VL，先运行 `genai_server`：
 
 ```bash
 sudo docker run -d \
@@ -81,11 +81,12 @@ sudo docker run -d \
     --backend vllm
 ```
 
-后端通过 `PADDLE_OCR_SERVER_URL` 访问该服务。如需使用远程 OCR 服务，修改 `backend/.env` 或启动时传入环境变量：
+远程 OCR 默认使用 `/layout-parsing` HTTP 接口。如需使用本地 Docker 服务，修改 `backend/.env` 或启动时传入环境变量：
 
 ```env
-PADDLE_OCR_BASE_URL=http://your-host:8118
-PADDLE_OCR_SERVER_URL=http://your-host:8118/v1
+PADDLE_OCR_MODE=python_api
+PADDLE_OCR_BASE_URL=http://127.0.0.1:8118
+PADDLE_OCR_SERVER_URL=http://127.0.0.1:8118/v1
 ```
 
 ## 关系抽取 Qwen API

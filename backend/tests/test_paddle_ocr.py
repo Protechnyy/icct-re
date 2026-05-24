@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from app.config import AppConfig
@@ -82,6 +83,29 @@ def test_normalize_restructured_document_falls_back_to_page_text(tmp_path: Path)
     assert restructured.markdown_text == "A\n\nB"
 
 
+def test_layout_parse_http_posts_remote_compatible_payload(tmp_path: Path) -> None:
+    config = replace(
+        build_config(tmp_path),
+        paddle_ocr_mode="http_api",
+        paddle_ocr_base_url="http://ocr.example",
+    )
+    session = FakeSession()
+    client = PaddleOcrClient(config, session=session)
+    pdf_path = tmp_path / "test.pdf"
+    pdf_path.write_bytes(b"%PDF-demo")
+
+    result = client.layout_parse(pdf_path, file_type=0)
+
+    assert result == {"layoutParsingResults": []}
+    assert session.posts == [
+        (
+            "http://ocr.example/layout-parsing",
+            {"file": "JVBERi1kZW1v", "fileType": 0},
+            10,
+        )
+    ]
+
+
 def test_extract_pages_reads_restructured_blocks_as_paragraphs(tmp_path: Path) -> None:
     client = PaddleOcrClient(build_config(tmp_path))
     result = {
@@ -133,3 +157,20 @@ def test_extract_pages_reads_restructured_blocks_as_paragraphs(tmp_path: Path) -
     )
     assert restructured.layout_parsing_results[0]["page"] == 1
     assert restructured.layout_parsing_results[-1]["page"] == 2
+
+
+class FakeResponse:
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return {"errorCode": 0, "result": {"layoutParsingResults": []}}
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.posts = []
+
+    def post(self, url: str, json: dict, timeout: int) -> FakeResponse:
+        self.posts.append((url, json, timeout))
+        return FakeResponse()

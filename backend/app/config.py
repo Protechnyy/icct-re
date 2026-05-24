@@ -17,6 +17,9 @@ DEFAULT_RELATION_MAX_BATCH_TOKENS = 2500
 DEFAULT_RELATION_INCLUDE_PARENT_TITLE = True
 DEFAULT_RELATION_BATCH_CONCURRENCY = 10
 DEFAULT_PADDLE_OCR_MAX_CONCURRENCY = 4
+DEFAULT_PADDLE_OCR_MODE = "http_api"
+DEFAULT_PADDLE_OCR_BASE_URL = "http://47.108.239.169:31583"
+DEFAULT_PADDLE_OCR_SERVER_URL = "http://127.0.0.1:8118/v1"
 
 
 def _as_bool(value: str | None, default: bool) -> bool:
@@ -119,9 +122,9 @@ class AppConfig:
             api_port=int(os.getenv("API_PORT", "5000")),
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             storage_root=storage_root,
-            paddle_ocr_mode=os.getenv("PADDLE_OCR_MODE", "python_api"),
-            paddle_ocr_base_url=os.getenv("PADDLE_OCR_BASE_URL", "http://127.0.0.1:8118").rstrip("/"),
-            paddle_ocr_server_url=os.getenv("PADDLE_OCR_SERVER_URL", "http://127.0.0.1:8118/v1").rstrip("/"),
+            paddle_ocr_mode=os.getenv("PADDLE_OCR_MODE", DEFAULT_PADDLE_OCR_MODE),
+            paddle_ocr_base_url=os.getenv("PADDLE_OCR_BASE_URL", DEFAULT_PADDLE_OCR_BASE_URL).rstrip("/"),
+            paddle_ocr_server_url=os.getenv("PADDLE_OCR_SERVER_URL", DEFAULT_PADDLE_OCR_SERVER_URL).rstrip("/"),
             paddle_ocr_api_model_name=os.getenv("PADDLE_OCR_API_MODEL_NAME", "PaddleOCR-VL-1.5-0.9B"),
             paddle_ocr_api_key=os.getenv("PADDLE_OCR_API_KEY", "EMPTY"),
             paddle_ocr_max_concurrency=_as_int(

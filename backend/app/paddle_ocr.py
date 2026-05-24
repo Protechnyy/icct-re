@@ -60,11 +60,6 @@ class PaddleOcrClient:
         payload: dict[str, Any] = {
             "file": file_to_base64(file_path),
             "fileType": file_type,
-            "visualize": False,
-            "restructurePages": False,
-            "useDocOrientationClassify": False,
-            "useDocUnwarping": False,
-            "useLayoutDetection": True,
         }
         return self._post("/layout-parsing", payload)
 

@@ -296,6 +296,30 @@ def test_relation_small_section_defaults_to_one_section_per_batch() -> None:
     assert batches[0]["text"].startswith("一、战区背景与态势\n\n1.1 第一小节")
 
 
+def test_relation_sections_accept_markdown_heading_prefixes() -> None:
+    markdown = (
+        "## 《铁幕回声行动》作战文档\n\n"
+        "文件等级：机密。\n\n"
+        "## 一、战区背景与态势\n\n"
+        "### 1.1 冲突概况\n\n"
+        "A 单位抵达甲地。\n\n"
+        "### 1.2 战略情报\n\n"
+        "B 单位支援乙地。\n\n"
+        "## 二、任务目标\n\n"
+        "### 2.1 主要目标\n\n"
+        "C 单位控制丙地。"
+    )
+
+    sections = _build_relation_sections(markdown)
+    batches = _build_relation_batches(sections, relation_config("small_section"))
+
+    assert [section["section_id"] for section in sections] == ["doc-title", "1.1", "1.2", "2.1"]
+    assert sections[1]["title"] == "1.1 冲突概况"
+    assert sections[1]["parent_title"] == "一、战区背景与态势"
+    assert sections[1]["text"].startswith("一、战区背景与态势\n\n1.1 冲突概况")
+    assert [batch["section_ids"] for batch in batches] == [["doc-title"], ["1.1"], ["1.2"], ["2.1"]]
+
+
 def test_relation_chapter_mode_groups_numbered_sections() -> None:
     sections = _build_relation_sections(sample_numbered_document())
 

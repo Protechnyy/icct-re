@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 RELATION_FIELD_ORDER = ("head", "relation", "tail", "evidence", "skill")
 NUMBERED_SECTION_RE = re.compile(r"^(?P<section_id>\d+(?:[.．]\d+)+)\s*(?P<title>.*)$")
 CHINESE_SECTION_RE = re.compile(r"^(?P<section_id>[一二三四五六七八九十百千万]+)、")
+MARKDOWN_HEADING_PREFIX_RE = re.compile(r"^\s{0,3}#{1,6}\s+(?P<title>.+?)\s*#*\s*$")
 MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\(\s*(?:<[^>\n]*>|[^)\n]*)\s*\)")
 MARKDOWN_REFERENCE_IMAGE_RE = re.compile(r"!\[[^\]\n]*\]\[[^\]\n]*\]")
 MARKDOWN_IMAGE_DEFINITION_RE = re.compile(
@@ -357,27 +358,29 @@ def _build_relation_sections(markdown_text: str, include_parent_title: bool = Tr
     current: dict[str, Any] | None = None
     parent_title: str | None = None
     for index, paragraph in enumerate(paragraphs):
-        if _is_markdown_title(paragraph):
-            if _is_chinese_markdown_title(paragraph) and _next_markdown_title_is_numbered(paragraphs, index):
+        title_paragraph = _strip_markdown_heading_prefix(paragraph)
+        if _is_markdown_title(title_paragraph):
+            if _is_chinese_markdown_title(title_paragraph) and _next_markdown_title_is_numbered(paragraphs, index):
                 if current is not None:
                     sections.append(_finalize_relation_section(current))
                     current = None
-                parent_title = paragraph
+                parent_title = title_paragraph
                 continue
 
             if current is not None:
                 sections.append(_finalize_relation_section(current))
-            section_parent_title = parent_title if parent_title and _is_numbered_markdown_title(paragraph) else ""
+            section_parent_title = parent_title if parent_title and _is_numbered_markdown_title(title_paragraph) else ""
             current = {
-                "section_id": _section_id_from_title(paragraph, len(sections) + 1),
-                "title": paragraph,
+                "section_id": _section_id_from_title(title_paragraph, len(sections) + 1),
+                "title": title_paragraph,
                 "parent_title": section_parent_title,
                 "paragraphs": [_markdown_paragraph(section_parent_title)]
                 if section_parent_title and include_parent_title
                 else [],
             }
-            if not _is_numbered_markdown_title(paragraph):
+            if not _is_numbered_markdown_title(title_paragraph):
                 parent_title = None
+            paragraph = title_paragraph
         elif current is None:
             prefix_paragraphs = [_markdown_paragraph(parent_title)] if parent_title and include_parent_title else []
             current = {
@@ -425,22 +428,30 @@ def _markdown_paragraph(content: str | None) -> dict[str, Any]:
     }
 
 
+def _strip_markdown_heading_prefix(paragraph: str) -> str:
+    content = str(paragraph or "").strip()
+    match = MARKDOWN_HEADING_PREFIX_RE.match(content)
+    if not match:
+        return content
+    return match.group("title").strip()
+
+
 def _is_markdown_title(paragraph: str) -> bool:
-    content = paragraph.strip()
+    content = _strip_markdown_heading_prefix(paragraph)
     return bool(_is_doc_markdown_title(content) or _is_numbered_markdown_title(content) or _is_chinese_markdown_title(content))
 
 
 def _is_doc_markdown_title(paragraph: str) -> bool:
-    content = paragraph.strip()
+    content = _strip_markdown_heading_prefix(paragraph)
     return content.startswith("《") and "》" in content and len(content) <= 80
 
 
 def _is_numbered_markdown_title(paragraph: str) -> bool:
-    return bool(NUMBERED_SECTION_RE.match(paragraph.strip()))
+    return bool(NUMBERED_SECTION_RE.match(_strip_markdown_heading_prefix(paragraph)))
 
 
 def _is_chinese_markdown_title(paragraph: str) -> bool:
-    content = paragraph.strip()
+    content = _strip_markdown_heading_prefix(paragraph)
     return bool(CHINESE_SECTION_RE.match(content)) and not _is_numbered_markdown_title(content)
 
 
@@ -453,7 +464,7 @@ def _next_markdown_title_is_numbered(paragraphs: list[str], index: int) -> bool:
 
 
 def _section_id_from_title(title: str | None, fallback_index: int) -> str:
-    stripped = str(title or "").strip()
+    stripped = _strip_markdown_heading_prefix(str(title or ""))
     number_match = NUMBERED_SECTION_RE.match(stripped)
     if number_match:
         return number_match.group("section_id").replace("．", ".")
