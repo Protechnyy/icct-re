@@ -81,12 +81,19 @@ sudo docker run -d \
     --backend vllm
 ```
 
-远程 OCR 默认使用 `/layout-parsing` HTTP 接口。如需使用本地 Docker 服务，修改 `backend/.env` 或启动时传入环境变量：
+默认使用本地 Docker 启动的 PaddleOCR-VL 服务，由后端 PaddleOCR Python API 连接本机 `8118/v1`：
 
 ```env
 PADDLE_OCR_MODE=python_api
 PADDLE_OCR_BASE_URL=http://127.0.0.1:8118
 PADDLE_OCR_SERVER_URL=http://127.0.0.1:8118/v1
+```
+
+如需临时切回远程 OCR HTTP 接口，可在 `backend/.env` 或启动环境中覆盖：
+
+```env
+PADDLE_OCR_MODE=http_api
+PADDLE_OCR_BASE_URL=http://47.108.239.169:31583
 ```
 
 ## 关系抽取 Qwen API
