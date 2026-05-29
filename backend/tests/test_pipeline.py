@@ -212,6 +212,15 @@ def test_pipeline_falls_back_when_restructure_fails(tmp_path: Path) -> None:
     ]
     assert result["document_meta"]["extractor"] == "skill4re"
     assert result["document_text"].startswith("Alice joined ACME")
+    assert list(result["stage_outputs"]["timing"]) == [
+        "total_elapsed_seconds",
+        "layout_parsing_seconds",
+        "document_restructure_seconds",
+        "relation_extraction_seconds",
+        "document_merge_seconds",
+    ]
+    assert result["stage_outputs"]["timing"] == result["skill4re_result"]["timing"]
+    assert result["stage_outputs"]["timing"]["total_elapsed_seconds"] >= result["stage_outputs"]["timing"]["relation_extraction_seconds"]
 
 
 def test_pipeline_strips_markdown_images_before_relation_extraction(tmp_path: Path) -> None:

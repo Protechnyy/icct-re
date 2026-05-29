@@ -54,17 +54,22 @@ class DocumentPipeline:
         self.relation_extractor = relation_extractor
 
     def process_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        task_started_at = time.perf_counter()
+        timing: dict[str, float] = {}
         file_path = Path(payload["file_path"])
         filename = payload["filename"]
         file_type = int(payload["file_type"])
 
         self.task_store.update_task(task_id, status="ocr_running", stage="layout_parsing", progress=10, error=None)
+        stage_started_at = time.perf_counter()
         layout_result = self.ocr_client.layout_parse(file_path=file_path, file_type=file_type)
         ocr_pages = self.ocr_client.extract_pages(layout_result)
+        timing["layout_parsing_seconds"] = round(time.perf_counter() - stage_started_at, 4)
         if not ocr_pages:
             raise RuntimeError(f"OCR parsed 0 pages from {filename}; check the uploaded file type and PaddleOCR logs.")
 
         self.task_store.update_task(task_id, stage="restructure_pages", progress=30)
+        stage_started_at = time.perf_counter()
         restructure_fallback = False
         try:
             restructure_payload = self.ocr_client.build_restructure_payload(ocr_pages, layout_result=layout_result)
@@ -73,6 +78,7 @@ class DocumentPipeline:
         except Exception:
             restructure_fallback = True
             restructured = self.ocr_client.normalize_restructured_document({}, ocr_pages)
+        timing["document_restructure_seconds"] = round(time.perf_counter() - stage_started_at, 4)
 
         page_texts = [(page.page_index, _strip_markdown_image_content(page.markdown_text)) for page in ocr_pages]
         document_text = _strip_markdown_image_content(restructured.markdown_text)
@@ -93,7 +99,14 @@ class DocumentPipeline:
         )
 
         self.task_store.update_task(task_id, status="merging", stage="document_merge", progress=85)
+        stage_started_at = time.perf_counter()
         safe_layout_result = {k: v for k, v in layout_result.items() if k != "_pages_res"}
+        timing["relation_extraction_seconds"] = round(
+            float(stage_outputs.get("timing", {}).get("relation_extraction_seconds", 0.0) or 0.0),
+            4,
+        )
+        stage_outputs["timing"] = timing
+        skill4re_result["timing"] = timing
         result = {
             "document_meta": {
                 "task_id": task_id,
@@ -127,6 +140,16 @@ class DocumentPipeline:
             "final_relations": final_relations,
             "final_relation_list": {"relation_list": final_relations},
         }
+        timing["document_merge_seconds"] = round(time.perf_counter() - stage_started_at, 4)
+        timing = {
+            "total_elapsed_seconds": round(time.perf_counter() - task_started_at, 4),
+            "layout_parsing_seconds": timing["layout_parsing_seconds"],
+            "document_restructure_seconds": timing["document_restructure_seconds"],
+            "relation_extraction_seconds": timing["relation_extraction_seconds"],
+            "document_merge_seconds": timing["document_merge_seconds"],
+        }
+        stage_outputs["timing"] = timing
+        skill4re_result["timing"] = timing
         result_dir = self.config.storage_root / "results" / task_id
         saved_paths = _result_file_paths(result_dir)
         result["document_meta"]["result_dir"] = str(result_dir)
@@ -195,6 +218,7 @@ class DocumentPipeline:
             time.perf_counter() - batch_extraction_started_at,
             4,
         )
+        skill4re_result["timing"] = _public_timing(skill4re_result.get("timing", {}))
         skill4re_result.setdefault("preprocess", {})["relation_batch_concurrency"] = batch_concurrency
         prediction = skill4re_result.get("prediction", {})
         stage_outputs = {
@@ -1066,6 +1090,15 @@ def _sum_batch_timing(batch_results: list[dict[str, Any]]) -> dict[str, float]:
             4,
         )
         for field in fields
+    }
+
+
+def _public_timing(timing: dict[str, Any]) -> dict[str, float]:
+    def seconds(field: str) -> float:
+        return round(float(timing.get(field, 0.0) or 0.0), 4)
+
+    return {
+        "relation_extraction_seconds": seconds("wall_seconds"),
     }
 
 
