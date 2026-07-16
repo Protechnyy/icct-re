@@ -1,10 +1,20 @@
 import { Alert, Button, Card, Empty, Input, Message, Space, Table, Tabs, Tag, Tooltip, Typography } from "@arco-design/web-react";
 import { IconCode, IconCopy, IconDownload, IconFile, IconRefresh, IconSearch } from "@arco-design/web-react/icon";
 import { useMemo, useState } from "react";
+import { exportTaskCsv } from "../lib/api";
 import { STATUS_CONFIG } from "./TaskTable";
 
 function downloadFile(filename, data, type = "application/json") {
   const blob = new Blob([typeof data === "string" ? data : JSON.stringify(data, null, 2)], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -146,6 +156,7 @@ function splitModeLabel(splitMode) {
 
 export default function ResultViewer({ task, result }) {
   const [activeTab, setActiveTab] = useState("preview");
+  const [exportingCsv, setExportingCsv] = useState(false);
   if (!task) return <Card className="result-empty-card"><Empty description={<div><div className="empty-title">选择一个任务查看抽取结果</div><div className="empty-description">从左侧任务列表中选择一个任务，查看文档内容和关系抽取结果。</div></div>} /></Card>;
   const status = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知" };
   const relations = getRelations(result);
@@ -169,10 +180,23 @@ export default function ResultViewer({ task, result }) {
     { key: "logs", title: "运行日志", content: <ExecutionLog task={task} result={result} /> },
   ];
   const activeContent = tabItems.find((item) => item.key === activeTab)?.content || tabItems[0].content;
+  async function handleExportCsv() {
+    try {
+      setExportingCsv(true);
+      const blob = await exportTaskCsv(task.task_id);
+      const stem = task.filename.replace(/\.[^.]+$/, "");
+      downloadBlob(`${stem}_relations.csv`, blob);
+      Message.success("CSV 导出成功");
+    } catch (error) {
+      Message.error(`CSV 导出失败：${String(error.message || error)}`);
+    } finally {
+      setExportingCsv(false);
+    }
+  }
   return <Card className="result-workspace" bordered={false}>
     <div className="task-summary-header">
       <div className="task-summary-main"><div className="summary-file-icon"><IconFile /></div><div><Tooltip content={task.filename}><Typography.Title heading={5} ellipsis={{ showTooltip: true }}>{task.filename}</Typography.Title></Tooltip><div className="task-summary-meta"><Tag color={status.color}>{status.label}</Tag><span>粒度：{splitModeLabel(task.metadata?.split_mode)}</span><span>Skill：自动路由</span><span>创建于 {task.created_at ? new Date(task.created_at).toLocaleString("zh-CN") : "-"}</span></div></div></div>
-      <Space wrap><Tooltip content="当前后端暂未提供重新执行接口"><Button icon={<IconRefresh />} disabled>重新执行</Button></Tooltip><Button icon={<IconDownload />} onClick={() => result && downloadFile(`${task.filename}.json`, result)} disabled={!result}>导出 JSON</Button><Tooltip content="当前后端未提供 CSV 导出接口"><Button type="primary" icon={<IconDownload />} disabled>导出 CSV</Button></Tooltip></Space>
+      <Space wrap><Tooltip content="当前后端暂未提供重新执行接口"><Button icon={<IconRefresh />} disabled>重新执行</Button></Tooltip><Button icon={<IconDownload />} onClick={() => result && downloadFile(`${task.filename}.json`, result)} disabled={!result}>导出 JSON</Button><Button type="primary" icon={<IconDownload />} loading={exportingCsv} disabled={!result} onClick={handleExportCsv}>导出 CSV</Button></Space>
     </div>
     {!result && task.status === "failed" ? <Alert type="error" title="任务执行失败" content={task.error || "请检查运行日志后重新执行任务。"} closable={false} /> : null}
     {!result && task.status !== "failed" ? <div className="result-pending"><Empty description="结果尚未就绪，系统将持续更新任务进度。" /></div> : <>

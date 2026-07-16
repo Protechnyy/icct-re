@@ -35,6 +35,14 @@ export async function getTaskResult(taskId) {
   return response.json();
 }
 
+export async function exportTaskCsv(taskId) {
+  const response = await fetch(`${API_BASE_URL}/result/${encodeURIComponent(taskId)}/csv`);
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.blob();
+}
+
 export async function getHealth() {
   const response = await fetch(`${API_BASE_URL}/health`);
   if (!response.ok) {

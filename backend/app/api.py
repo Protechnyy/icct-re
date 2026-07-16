@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import csv
+import io
 import logging
 from pathlib import Path
+from urllib.parse import quote
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 
 from .config import AppConfig, RELATION_SPLIT_MODES
@@ -99,6 +102,24 @@ def create_app() -> Flask:
             return jsonify({"error": "Result not ready"}), 409
         return jsonify(result_payload), 200
 
+    @app.get("/api/result/<task_id>/csv")
+    def result_csv(task_id: str) -> Response | tuple[object, int]:
+        task = task_store.get_task(task_id)
+        if not task:
+            return jsonify({"error": "Task not found"}), 404
+        result_payload = task_store.get_result(task_id)
+        if not result_payload:
+            return jsonify({"error": "Result not ready"}), 409
+
+        source_name = Path(str(task.get("filename") or task_id)).stem
+        download_name = f"{source_name}_relations.csv"
+        response = Response(_relations_to_csv(result_payload), content_type="text/csv; charset=utf-8")
+        response.headers["Content-Disposition"] = (
+            f'attachment; filename="relations.csv"; filename*=UTF-8\'\'{quote(download_name)}'
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/api/health")
     def health() -> tuple[object, int]:
         dependencies = {
@@ -159,6 +180,75 @@ def create_app() -> Flask:
 
 def _target_path(storage_root: Path, task_id: str, filename: str) -> Path:
     return storage_root / "uploads" / task_id / filename
+
+
+CSV_COLUMNS = (
+    "主体",
+    "关系",
+    "客体",
+    "证据",
+    "Skill",
+    "来源章节",
+    "来源页码",
+    "来源块",
+    "来源段落",
+    "来源批次",
+)
+
+
+def _relations_to_csv(result_payload: dict[str, object]) -> str:
+    relation_container = result_payload.get("final_relation_list")
+    if isinstance(relation_container, dict):
+        relations = relation_container.get("relation_list", [])
+    else:
+        relations = result_payload.get("final_relations", [])
+    if not isinstance(relations, list):
+        relations = []
+
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=CSV_COLUMNS)
+    writer.writeheader()
+    for relation in relations:
+        if not isinstance(relation, dict):
+            continue
+        writer.writerow(
+            {
+                "主体": _csv_text(relation.get("head") or relation.get("subject")),
+                "关系": _csv_text(relation.get("relation")),
+                "客体": _csv_text(relation.get("tail") or relation.get("object")),
+                "证据": _csv_text(relation.get("evidence")),
+                "Skill": _csv_text(relation.get("skill")),
+                "来源章节": _csv_list(relation.get("source_sections")),
+                "来源页码": _csv_list(relation.get("source_pages")),
+                "来源块": _csv_list(relation.get("source_blocks")),
+                "来源段落": _csv_paragraphs(relation.get("source_paragraphs")),
+                "来源批次": _csv_text(relation.get("source_batch_index")),
+            }
+        )
+    return "\ufeff" + output.getvalue()
+
+
+def _csv_list(value: object) -> str:
+    values = value if isinstance(value, list) else ([] if value in (None, "") else [value])
+    return "、".join(_csv_text(item) for item in values)
+
+
+def _csv_paragraphs(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    contents = [
+        _csv_text(item.get("content"))
+        for item in value
+        if isinstance(item, dict) and item.get("content") not in (None, "")
+    ]
+    return "\n\n".join(contents)
+
+
+def _csv_text(value: object) -> str:
+    text = "" if value is None else str(value)
+    if text.startswith(("=", "+", "-", "@")):
+        return "'" + text
+    return text
 
 
 def _relation_split_config_from_form(form: object, config: AppConfig) -> dict[str, object]:
