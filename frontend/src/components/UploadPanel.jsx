@@ -1,189 +1,75 @@
-import { DeleteOutlined, FileImageOutlined, FilePdfOutlined, FileTextOutlined, InboxOutlined } from "@ant-design/icons";
-import { Button, InputNumber, Segmented, Space, Tag, Typography } from "antd";
-import { useCallback, useRef, useState } from "react";
+import { Button, Card, InputNumber, Radio, Upload } from "@arco-design/web-react";
+import { IconDelete, IconFile, IconFileImage, IconFilePdf, IconUpload } from "@arco-design/web-react/icon";
 
 function formatSize(bytes) {
-  if (!bytes && bytes !== 0) return "-";
+  if (bytes === undefined || bytes === null) return "-";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
 function fileIcon(file) {
-  const type = file.type || "";
-  if (type.includes("pdf")) return <FilePdfOutlined />;
-  if (type.startsWith("image/")) return <FileImageOutlined />;
-  return <FileTextOutlined />;
+  const type = file.type || file.originFile?.type || "";
+  if (type.includes("pdf") || /\.pdf$/i.test(file.name)) return <IconFilePdf />;
+  if (type.startsWith("image/") || /\.(png|jpe?g)$/i.test(file.name)) return <IconFileImage />;
+  return <IconFile />;
 }
 
-export default function UploadPanel({
-  fileList,
-  onChange,
-  onSubmit,
-  onRemove,
-  submitting,
-  relationOptions,
-  onRelationOptionsChange,
-}) {
-  const [dragOver, setDragOver] = useState(false);
-  const inputRef = useRef(null);
+export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, submitting, relationOptions, onRelationOptionsChange }) {
   const splitMode = relationOptions?.split_mode || "small_section";
   const batchSize = relationOptions?.batch_size || 1;
-
-  const updateRelationOptions = useCallback((next) => {
-    onRelationOptionsChange?.({
-      split_mode: splitMode,
-      batch_size: batchSize,
-      ...relationOptions,
-      ...next,
-    });
-  }, [batchSize, onRelationOptionsChange, relationOptions, splitMode]);
-
-  const makeFileItem = (file) => ({
-    uid: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-    name: file.name,
-    size: file.size,
-    type: file.type,
-    originFileObj: file,
-  });
-
-  const handleDrop = useCallback((e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    const dropped = Array.from(e.dataTransfer.files || []).filter((f) =>
-      /\.(pdf|png|jpg|jpeg|webp|bmp)$/i.test(f.name)
-    );
-    if (!dropped.length) return;
-    const next = [...fileList, ...dropped.map(makeFileItem)];
-    onChange?.({ fileList: next });
-  }, [fileList, onChange]);
-
-  const handleInputChange = useCallback((e) => {
-    const selected = Array.from(e.target.files || []);
-    if (!selected.length) return;
-    const next = [...fileList, ...selected.map(makeFileItem)];
-    onChange?.({ fileList: next });
-    e.target.value = "";
-  }, [fileList, onChange]);
+  const updateOptions = (next) => onRelationOptionsChange({ ...relationOptions, ...next });
 
   return (
-    <div className="panel upload-panel">
-      <div className="panel-header">
-        <Typography.Title level={4}>上传文档</Typography.Title>
-        <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
-          支持 PDF 和常见图片格式，批量上传后会自动创建独立任务。
-        </Typography.Paragraph>
-      </div>
-
-      <div className="relation-options">
-        <div className="relation-option-row">
-          <Typography.Text className="relation-option-label">抽取粒度</Typography.Text>
-          <Segmented
-            size="small"
-            value={splitMode}
-            onChange={(value) =>
-              updateRelationOptions({
-                split_mode: value,
-                batch_size: value === "fixed_sections" ? batchSize : 1,
-              })
-            }
-            options={[
-              { label: "小节", value: "small_section" },
-              { label: "大章", value: "chapter" },
-              { label: "段落", value: "paragraph" },
-              { label: "固定 N", value: "fixed_sections" },
-            ]}
-          />
-        </div>
-        {splitMode === "fixed_sections" ? (
-          <div className="relation-option-row">
-            <Typography.Text className="relation-option-label">每批数量</Typography.Text>
-            <InputNumber
-              min={1}
-              max={18}
-              value={batchSize}
-              onChange={(value) => updateRelationOptions({ batch_size: value || 1 })}
-              size="small"
-            />
-          </div>
-        ) : null}
-      </div>
-
-      <div
-        className={`upload-dropzone ${dragOver ? "active" : ""}`}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={handleDrop}
-        onClick={() => inputRef.current?.click()}
+    <Card className="task-creator-card" title="新建抽取任务" bordered>
+      <div className="field-label">文件上传</div>
+      <Upload
+        drag
+        autoUpload={false}
+        multiple
+        accept=".pdf,.png,.jpg,.jpeg"
+        fileList={fileList}
+        showUploadList={false}
+        onChange={(nextFileList) => onChange(nextFileList)}
+        className="document-uploader"
       >
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp"
-          style={{ display: "none" }}
-          onChange={handleInputChange}
-        />
-        <p className="upload-dropzone-icon"><InboxOutlined /></p>
-        <p className="upload-dropzone-text">点击或拖拽文件到此处</p>
-        <p className="upload-dropzone-hint">
-          支持 PDF、PNG、JPG、WEBP、BMP 格式
-          <br />
-          选中文件后会自动开始上传，后端依次执行 PaddleOCR-VL 与 Qwen 关系抽取
-        </p>
-      </div>
-
-      <div className="upload-toolbar">
-        <Space wrap>
-          <Button
-            type="primary"
-            onClick={onSubmit}
-            loading={submitting}
-            disabled={!fileList.length}
-          >
-            重新上传当前选择
-          </Button>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            已选择 {fileList.length} 个文件
-          </Typography.Text>
-          {!fileList.length ? (
-            <Tag color="default" style={{ fontSize: 12 }}>选择文件后会自动开始上传</Tag>
-          ) : null}
-        </Space>
-      </div>
-
-      <div className="upload-selection">
-        {fileList.length ? (
-          fileList.map((item) => (
-            <div className="file-list-card" key={item.uid}>
-              <span className="file-icon">{fileIcon(item)}</span>
-              <div className="file-info">
-                <div className="file-name" title={item.name}>
-                  {item.name}
-                </div>
-                <div className="file-meta">
-                  {formatSize(item.size)} · {item.type || "未知格式"}
-                </div>
+        <div className="upload-trigger">
+          <IconUpload className="upload-icon" />
+          <div className="upload-title">点击或拖拽文件到此处上传</div>
+          <div className="upload-hint">支持 PDF、PNG、JPG、JPEG，可批量上传</div>
+        </div>
+      </Upload>
+      {fileList.length > 0 && (
+        <div className="selected-file-list">
+          <div className="file-count">已选择 {fileList.length} 个文件</div>
+          {fileList.map((file) => (
+            <div className="selected-file" key={file.uid}>
+              <span className="selected-file-icon">{fileIcon(file)}</span>
+              <div className="selected-file-detail">
+                <span title={file.name} className="selected-file-name">{file.name}</span>
+                <span className="selected-file-size">{formatSize(file.size)}</span>
               </div>
-              <span
-                className="file-remove"
-                title="移除"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemove?.(item);
-                }}
-              >
-                <DeleteOutlined />
-              </span>
+              <Button type="text" status="danger" size="mini" icon={<IconDelete />} onClick={() => onRemove(file)} />
             </div>
-          ))
-        ) : (
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            当前还没有已选文件。
-          </Typography.Text>
+          ))}
+        </div>
+      )}
+      <div className="task-config">
+        <div className="field-label">抽取粒度</div>
+        <Radio.Group type="button" value={splitMode} onChange={(value) => updateOptions({ split_mode: value, batch_size: value === "fixed_sections" ? batchSize : 1 })}>
+          <Radio value="small_section">小节</Radio>
+          <Radio value="chapter">章节</Radio>
+          <Radio value="paragraph">段落</Radio>
+          <Radio value="fixed_sections">固定长度</Radio>
+        </Radio.Group>
+        {splitMode === "fixed_sections" && (
+          <div className="fixed-length-row">
+            <span>每段最大长度</span>
+            <InputNumber min={1} max={18000} value={batchSize} onChange={(value) => updateOptions({ batch_size: value || 1 })} suffix="字符" />
+          </div>
         )}
       </div>
-    </div>
+      <Button className="submit-task-button" type="primary" long icon={<IconUpload />} loading={submitting} disabled={!fileList.length} onClick={onSubmit}>开始抽取</Button>
+    </Card>
   );
 }

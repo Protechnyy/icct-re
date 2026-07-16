@@ -1,5 +1,5 @@
-import { Button, Empty, Input, Space, Table, Tag, Typography } from "antd";
-import { PlusOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
+import { Button, Card, Empty, Input, Message, Space, Table, Tag, Typography } from "@arco-design/web-react";
+import { IconPlus, IconRefresh, IconSave } from "@arco-design/web-react/icon";
 import { useEffect, useMemo, useState } from "react";
 import { createSkill, listSkills, updateSkill } from "../lib/api";
 
@@ -72,7 +72,7 @@ function parseError(error) {
   }
 }
 
-export default function SkillManager({ messageApi }) {
+export default function SkillManager() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [skills, setSkills] = useState([]);
@@ -95,7 +95,7 @@ export default function SkillManager({ messageApi }) {
         selectSkill(payload.skills[0]);
       }
     } catch (error) {
-      messageApi?.error(`读取 skills 失败: ${parseError(error)}`);
+      Message.error(`读取 skills 失败: ${parseError(error)}`);
     } finally {
       setLoading(false);
     }
@@ -177,12 +177,12 @@ export default function SkillManager({ messageApi }) {
       const saved = mode === "edit" && selectedName
         ? await updateSkill(selectedName, payload)
         : await createSkill(payload);
-      messageApi?.success(mode === "edit" ? "Skill 已更新" : "Skill 已添加");
+      Message.success(mode === "edit" ? "Skill 已更新" : "Skill 已添加");
       setMode("edit");
       setSelectedName(saved.name);
       await refreshSkills(saved.name);
     } catch (error) {
-      messageApi?.error(`保存失败: ${parseError(error)}`);
+      Message.error(`保存失败: ${parseError(error)}`);
     } finally {
       setSaving(false);
     }
@@ -211,7 +211,7 @@ export default function SkillManager({ messageApi }) {
       title: "规模",
       width: 170,
       render: (_, record) => (
-        <Space size={[4, 4]} wrap>
+        <Space size="mini" wrap>
           <Tag>{record.keywords?.length || 0} keywords</Tag>
           <Tag>{record.extraction_rules?.length || 0} rules</Tag>
           <Tag>{record.fewshot?.length || 0} fewshot</Tag>
@@ -221,22 +221,22 @@ export default function SkillManager({ messageApi }) {
   ], [selectedName]);
 
   return (
-    <div className="panel skill-manager">
+    <Card className="skill-manager" bordered={false}>
       <div className="panel-header result-header">
         <div style={{ minWidth: 0 }}>
-          <Typography.Title level={4} style={{ margin: 0 }}>Skills 管理</Typography.Title>
-          <Typography.Paragraph type="secondary" style={{ margin: "4px 0 0", fontSize: 13 }} ellipsis={{ tooltip: true }}>
+          <Typography.Title heading={4} style={{ margin: 0 }}>Skills 管理</Typography.Title>
+          <Typography.Paragraph style={{ margin: "4px 0 0", fontSize: 13 }} ellipsis={{ showTooltip: true }}>
             {skillsDir || "读取当前 Skill4RE skills 目录"}
           </Typography.Paragraph>
         </div>
         <Space wrap>
-          <Button icon={<ReloadOutlined />} onClick={() => refreshSkills(selectedName)} loading={loading}>
+          <Button icon={<IconRefresh />} onClick={() => refreshSkills(selectedName)} loading={loading}>
             刷新
           </Button>
-          <Button icon={<PlusOutlined />} onClick={startCreate}>
+          <Button icon={<IconPlus />} onClick={startCreate}>
             新增
           </Button>
-          <Button type="primary" icon={<SaveOutlined />} onClick={saveDraft} loading={saving}>
+          <Button type="primary" icon={<IconSave />} onClick={saveDraft} loading={saving}>
             保存
           </Button>
         </Space>
@@ -249,16 +249,16 @@ export default function SkillManager({ messageApi }) {
             size="small"
             loading={loading}
             columns={skillColumns}
-            dataSource={skills}
+            data={skills}
             pagination={false}
-            locale={{ emptyText: <Empty description="未扫描到 skills" /> }}
+            noDataElement={<Empty description="未扫描到 skills" />}
             onRow={(record) => ({ onClick: () => selectSkill(record) })}
           />
         </section>
 
         <section className="skill-editor">
           <div className="skill-editor-title">
-            <Typography.Title level={5} style={{ margin: 0 }}>
+            <Typography.Title heading={5} style={{ margin: 0 }}>
               {mode === "edit" ? `编辑 ${selectedName}` : "新增 Skill"}
             </Typography.Title>
           </div>
@@ -270,7 +270,7 @@ export default function SkillManager({ messageApi }) {
                 <Input.TextArea
                   autoSize={{ minRows: field === "name" ? 1 : 2, maxRows: 5 }}
                   value={draft[field]}
-                  onChange={(event) => updateField(field, event.target.value)}
+                  onChange={(value) => updateField(field, value)}
                 />
               </div>
             ))}
@@ -302,7 +302,7 @@ export default function SkillManager({ messageApi }) {
           />
         </section>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -310,8 +310,8 @@ function EditableStringList({ title, items, placeholder, onChange, onAdd, onRemo
   return (
     <div className="skill-section">
       <div className="skill-section-header">
-        <Typography.Title level={5} style={{ margin: 0 }}>{title}</Typography.Title>
-        <Button size="small" icon={<PlusOutlined />} onClick={onAdd}>添加</Button>
+        <Typography.Title heading={5} style={{ margin: 0 }}>{title}</Typography.Title>
+        <Button size="small" icon={<IconPlus />} onClick={onAdd}>添加</Button>
       </div>
       <div className="skill-array-table">
         {items.map((item, index) => (
@@ -320,9 +320,9 @@ function EditableStringList({ title, items, placeholder, onChange, onAdd, onRemo
             <Input
               value={item}
               placeholder={placeholder}
-              onChange={(event) => onChange(index, event.target.value)}
+              onChange={(value) => onChange(index, value)}
             />
-            <Button size="small" danger onClick={() => onRemove(index)}>删除</Button>
+            <Button size="small" status="danger" onClick={() => onRemove(index)}>删除</Button>
           </div>
         ))}
       </div>
@@ -334,8 +334,8 @@ function FewshotList({ items, onChange, onAdd, onRemove }) {
   return (
     <div className="skill-section">
       <div className="skill-section-header">
-        <Typography.Title level={5} style={{ margin: 0 }}>fewshot</Typography.Title>
-        <Button size="small" icon={<PlusOutlined />} onClick={onAdd}>添加</Button>
+        <Typography.Title heading={5} style={{ margin: 0 }}>fewshot</Typography.Title>
+        <Button size="small" icon={<IconPlus />} onClick={onAdd}>添加</Button>
       </div>
       <div className="skill-fewshot-table">
         {items.map((item, index) => (
@@ -345,15 +345,15 @@ function FewshotList({ items, onChange, onAdd, onRemove }) {
               autoSize={{ minRows: 3, maxRows: 8 }}
               value={item.text}
               placeholder="示例文本"
-              onChange={(event) => onChange(index, "text", event.target.value)}
+              onChange={(value) => onChange(index, "text", value)}
             />
             <Input.TextArea
               autoSize={{ minRows: 3, maxRows: 10 }}
               value={item.json}
               placeholder='{"relation_list":[...]}'
-              onChange={(event) => onChange(index, "json", event.target.value)}
+              onChange={(value) => onChange(index, "json", value)}
             />
-            <Button size="small" danger onClick={() => onRemove(index)}>删除</Button>
+            <Button size="small" status="danger" onClick={() => onRemove(index)}>删除</Button>
           </div>
         ))}
       </div>

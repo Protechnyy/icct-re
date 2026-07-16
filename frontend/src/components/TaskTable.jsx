@@ -1,77 +1,78 @@
-import { CheckCircleOutlined, CloseCircleOutlined, FileTextOutlined, LoadingOutlined, SyncOutlined } from "@ant-design/icons";
-import { Progress, Table, Tag, Tooltip, Typography } from "antd";
+import { Badge, Button, Card, Empty, Input, Progress, Select, Tag, Tooltip } from "@arco-design/web-react";
+import { IconCheckCircle, IconCloseCircle, IconFile, IconFileImage, IconFilePdf, IconMore, IconSearch, IconSync } from "@arco-design/web-react/icon";
+import { useMemo, useState } from "react";
 
-const STATUS_CONFIG = {
-  queued: { color: "default", icon: null, label: "排队中" },
-  ocr_running: { color: "processing", icon: <SyncOutlined spin />, label: "OCR 识别" },
-  extracting: { color: "processing", icon: <SyncOutlined spin />, label: "关系抽取" },
-  merging: { color: "processing", icon: <SyncOutlined spin />, label: "结果整合" },
-  succeeded: { color: "success", icon: <CheckCircleOutlined />, label: "已完成" },
-  failed: { color: "error", icon: <CloseCircleOutlined />, label: "失败" },
+export const STATUS_CONFIG = {
+  queued: { color: "gray", label: "等待中", stage: "等待任务调度" },
+  ocr_running: { color: "arcoblue", label: "OCR 处理中", stage: "正在识别文档内容" },
+  extracting: { color: "arcoblue", label: "抽取中", stage: "正在抽取文档关系" },
+  merging: { color: "arcoblue", label: "结果整合", stage: "正在整理抽取结果" },
+  succeeded: { color: "green", label: "已完成", stage: "关系抽取完成" },
+  failed: { color: "red", label: "失败", stage: "任务处理失败" },
+  cancelled: { color: "orange", label: "已取消", stage: "任务已取消" },
 };
 
+function taskIcon(filename = "") {
+  if (/\.pdf$/i.test(filename)) return <IconFilePdf />;
+  if (/\.(png|jpe?g)$/i.test(filename)) return <IconFileImage />;
+  return <IconFile />;
+}
+
+function relativeTime(value) {
+  if (!value) return "刚刚";
+  const difference = Date.now() - new Date(value).getTime();
+  if (Number.isNaN(difference) || difference < 60000) return "刚刚";
+  if (difference < 3600000) return `${Math.floor(difference / 60000)} 分钟前`;
+  if (difference < 86400000) return `${Math.floor(difference / 3600000)} 小时前`;
+  return new Date(value).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+}
+
+function TaskListItem({ task, active, onSelect }) {
+  const config = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知", stage: task.stage || "处理中" };
+  const stage = task.stage && task.stage !== task.status ? task.stage : config.stage;
+  return (
+    <button className={`task-list-item ${active ? "is-active" : ""}`} onClick={() => onSelect(task.task_id)}>
+      <div className="task-item-topline">
+        <div className="task-file-title">
+          <span className="task-file-icon">{taskIcon(task.filename)}</span>
+          <Tooltip content={task.filename}><span className="task-file-name">{task.filename}</span></Tooltip>
+        </div>
+        <Tag color={config.color} size="small">{config.label}</Tag>
+      </div>
+      <div className="task-stage">{stage}</div>
+      <Progress percent={Number(task.progress) || 0} size="small" showText className="task-progress" />
+      {task.error && <div className="task-error" title={task.error}>{task.error}</div>}
+      <div className="task-item-footer">
+        <span>{relativeTime(task.created_at)}</span>
+        <span>{task.status === "succeeded" ? "已完成" : "处理中"}</span>
+        <IconMore className="task-more" />
+      </div>
+    </button>
+  );
+}
+
 export default function TaskTable({ tasks, onSelectTask, activeTaskId }) {
-  const columns = [
-    {
-      title: "文件名",
-      dataIndex: "filename",
-      key: "filename",
-      width: 160,
-      ellipsis: true,
-      render: (value, record) => (
-        <Tooltip title={value}>
-          <button
-            className={`row-link ${activeTaskId === record.task_id ? "active" : ""}`}
-            onClick={() => onSelectTask(record.task_id)}
-          >
-            <FileTextOutlined style={{ marginRight: 6, opacity: 0.65 }} />
-            {value}
-          </button>
-        </Tooltip>
-      ),
-    },
-    {
-      title: "状态",
-      dataIndex: "status",
-      key: "status",
-      width: 90,
-      render: (value) => {
-        const cfg = STATUS_CONFIG[value] || { color: "default", icon: null, label: value };
-        return (
-          <Tag color={cfg.color} icon={cfg.icon} style={{ fontSize: 12 }}>
-            {cfg.label}
-          </Tag>
-        );
-      },
-    },
-    {
-      title: "进度",
-      dataIndex: "progress",
-      key: "progress",
-      render: (value, record) => (
-        <Tooltip title={record.error || undefined}>
-          <Progress percent={value || 0} size="small" />
-        </Tooltip>
-      ),
-    },
-  ];
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+  const filteredTasks = useMemo(() => tasks.filter((task) => {
+    const matchName = task.filename?.toLowerCase().includes(query.trim().toLowerCase());
+    return matchName && (status === "all" || task.status === status);
+  }), [tasks, query, status]);
 
   return (
-    <div className="panel task-table">
-      <div className="panel-header">
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          任务列表
-        </Typography.Title>
+    <Card className="task-list-card" title="任务列表" bordered>
+      <div className="task-filter-bar">
+        <Input value={query} onChange={setQuery} prefix={<IconSearch />} placeholder="搜索文件名" allowClear />
+        <Select value={status} onChange={setStatus} options={[
+          { value: "all", label: "全部状态" },
+          ...Object.entries(STATUS_CONFIG).map(([value, option]) => ({ value, label: option.label })),
+        ]} />
       </div>
-      <Table
-        rowKey="task_id"
-        columns={columns}
-        dataSource={tasks}
-        pagination={false}
-        size="small"
-        scroll={{ x: false, y: '100%' }}
-        locale={{ emptyText: "暂无任务" }}
-      />
-    </div>
+      <div className="task-list-scroll">
+        {filteredTasks.length ? filteredTasks.map((task) => (
+          <TaskListItem key={task.task_id} task={task} active={activeTaskId === task.task_id} onSelect={onSelectTask} />
+        )) : <Empty description="暂无抽取任务" />}
+      </div>
+    </Card>
   );
 }
