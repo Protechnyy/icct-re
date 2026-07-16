@@ -1,6 +1,6 @@
-# Document-Level RE
+# ICCT-RE（文档级关系抽取）
 
-文档级关系抽取工作台：上传 PDF / 图片后，后端完成 OCR、结构化重排、Skill4RE 技能路由和关系抽取，最终返回 `relation_list` JSON。
+ICCT-RE 是一个文档级关系抽取工作台。上传 PDF 或图片后，后端依次完成 OCR 版面解析、结构化重排、Skill4RE 技能路由和关系抽取，最终返回 `relation_list` JSON。
 
 ## 项目结构
 
@@ -13,15 +13,15 @@
 
 默认开发环境使用：
 
-- Redis：`redis://localhost:6379/0`
-- OCR 版面解析服务：默认使用远程 `http://47.108.239.169:31583/layout-parsing`；也可切换为本地 PaddleOCR-VL `http://127.0.0.1:8118/v1`
-- 关系抽取 Qwen OpenAI 兼容服务：默认使用远程 `https://api.asukalangely.top/v1/chat/completions`；也可切换为本地 vLLM `http://127.0.0.1:8000/v1`
+- Redis（本地）：`redis://localhost:6379/0`
+- OCR 版面解析服务（本地）：PaddleOCR-VL-1.6-0.9B，默认地址为 `http://127.0.0.1:8118/v1`
+- 关系抽取 Qwen OpenAI 兼容服务：远程 API，默认模型为 `Qwen3-32B-AWQ`
 
-基本环境要求：Linux、Python 3.10+、Node.js 18+、Redis。若本机启动 PaddleOCR-VL / vLLM，还需要 NVIDIA GPU、Docker 和 NVIDIA Container Toolkit。
+## 环境准备
 
-## 快速启动
+首次使用请先完成本节；随后按本文顺序启动 Redis、PaddleOCR-VL、关系抽取服务，最后启动 ICCT-RE。
 
-按下面顺序手动启动服务。首次准备后端配置：
+创建后端虚拟环境、安装依赖并生成配置文件：
 
 ```bash
 cd backend
@@ -32,16 +32,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-按需修改 `backend/.env`，然后依次启动：
-
-- Redis
-- PaddleOCR-VL
-- 远程 Qwen API key，或本地 vLLM
-- 后端 API
-- 后端 Worker
-- 前端
-
-默认访问：[http://127.0.0.1:5173](http://127.0.0.1:5173)。
+按需修改 `backend/.env`。后续章节中的默认地址均已写入 `.env.example`；前端依赖会在首次运行启动脚本时自动安装。
 
 ## 启动 Redis
 
@@ -55,17 +46,9 @@ sudo docker run -d \
   m.daocloud.io/docker.io/library/redis:7
 ```
 
-常用维护命令：
-
-```bash
-sudo docker ps
-sudo docker logs -f docre-redis
-sudo docker restart docre-redis
-```
-
 ## 启动 PaddleOCR-VL
 
-默认配置会请求远程 OCR 服务，不需要在本机启动 PaddleOCR-VL。如果需要改回本地 Docker 部署的 PaddleOCR-VL，先运行 `genai_server`：
+OCR 版面解析默认使用本地部署的 PaddleOCR-VL（`PaddleOCR-VL-1.6-0.9B`）。先通过 Docker 启动 `paddlex_genai_server`：
 
 ```bash
 sudo docker run -d \
@@ -73,15 +56,16 @@ sudo docker run -d \
   --restart unless-stopped \
   --gpus all \
   --network host \
-  ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server:latest-nvidia-gpu \
-  paddleocr genai_server \
-    --model_name PaddleOCR-VL-1.5-0.9B \
+  -e PADDLE_PDX_MODEL_SOURCE=BOS \
+  ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddlex-genai-vllm-server:latest \
+  paddlex_genai_server \
+    --model_name PaddleOCR-VL-1.6-0.9B \
     --host 0.0.0.0 \
     --port 8118 \
     --backend vllm
 ```
 
-默认使用本地 Docker 启动的 PaddleOCR-VL 服务，由后端 PaddleOCR Python API 连接本机 `8118/v1`：
+后端默认通过 PaddleOCR Python API 连接本机 `8118/v1`：
 
 ```env
 PADDLE_OCR_MODE=python_api
@@ -89,35 +73,26 @@ PADDLE_OCR_BASE_URL=http://127.0.0.1:8118
 PADDLE_OCR_SERVER_URL=http://127.0.0.1:8118/v1
 ```
 
-如需临时切回远程 OCR HTTP 接口，可在 `backend/.env` 或启动环境中覆盖：
-
-```env
-PADDLE_OCR_MODE=http_api
-PADDLE_OCR_BASE_URL=http://47.108.239.169:31583
-```
-
 ## 关系抽取 Qwen API
 
-默认交付配置使用已经部署好的远程 Qwen3-32B-BF16 OpenAI 兼容接口。复制 `backend/.env.example` 为 `backend/.env` 后，只需要把 `VLLM_API_KEY` 改成有效 key；不需要启动本地 vLLM。
+默认配置通过远程 OpenAI 兼容 API 调用 `Qwen3-32B-AWQ`。复制 `backend/.env.example` 为 `backend/.env` 后，填写有效的 `VLLM_API_KEY` 即可，无需启动本地 vLLM。
 
 ```env
 VLLM_BASE_URL=https://api.asukalangely.top/v1/chat/completions
 VLLM_API_KEY=你的_api_key
-VLLM_MODEL=Qwen3-32B-BF16
+VLLM_MODEL=Qwen3-32B-AWQ
 VLLM_MAX_RETRIES=3
 VLLM_RETRY_BACKOFF_SECONDS=2
 SKILL4RE_BACKEND=vllm
-SKILL4RE_MODEL=Qwen3-32B-BF16
+SKILL4RE_MODEL=Qwen3-32B-AWQ
 VLLM_ENABLE_THINKING=false
 ```
 
 `VLLM_BASE_URL` 既可以填写完整的 `/v1/chat/completions` 地址，也可以填写去掉 `/chat/completions` 后的 `/v1` base URL；后端会在请求关系抽取时自动规整。
 
-远程服务偶发 `502`、`503`、`504` 或 `429` 时，关系抽取请求会按 `VLLM_MAX_RETRIES` 和 `VLLM_RETRY_BACKOFF_SECONDS` 做短重试；如果重试后仍失败，说明远程 API 上游服务不可用，需要稍后重跑任务或联系 API 服务提供方。
-
 ## 可选：启动本地 vLLM
 
-如果不使用远程 API，也可以本地启动 vLLM。示例：
+如需改用本地模型，可启动 vLLM：
 
 ```bash
 source ~/venvs/vllm-qwen/bin/activate
@@ -146,49 +121,23 @@ curl http://127.0.0.1:8000/v1/models -H "Authorization: Bearer EMPTY"
 
 显存不足时可更换更小模型，并同步修改 `backend/.env` 的 `VLLM_MODEL` 和 `SKILL4RE_MODEL`。
 
-## 关系抽取粒度
+## 启动 ICCT-RE
 
-上传时可选择关系抽取粒度，后端会把配置保存到任务 payload 并在结果中返回 `relation_split_config`、`relation_sections` 和 `relation_batches`。
+在依赖服务就绪后，在仓库根目录打开两个终端：
 
-支持模式：
-
-- `small_section`：按 `1.1`、`4.4` 等小节切分，默认
-- `chapter`：按 `一、`、`二、` 等大章切分
-- `paragraph`：按 Markdown 段落切分
-- `fixed_sections`：每 N 个小节一批
-
-默认配置在 [backend/.env.example](backend/.env.example)：
-
-```env
-RELATION_SPLIT_MODE=small_section
-RELATION_BATCH_SIZE=1
-RELATION_CHAPTER_BATCH_SIZE=2
-RELATION_PARAGRAPH_BATCH_SIZE=5
-RELATION_FIXED_SECTION_BATCH_SIZE=1
-RELATION_MAX_BATCH_TOKENS=2500
-RELATION_INCLUDE_PARENT_TITLE=true
-RELATION_BATCH_CONCURRENCY=10
-```
-
-`RELATION_CHAPTER_BATCH_SIZE` 控制 `chapter` 模式下每批合并几个大章；`RELATION_PARAGRAPH_BATCH_SIZE` 控制 `paragraph` 模式下每批合并几个段落；`RELATION_FIXED_SECTION_BATCH_SIZE` 控制 `fixed_sections` 模式下每批合并几个小节。旧的 `RELATION_BATCH_SIZE` 保留为 fixed sections 的兼容别名。
-
-`RELATION_BATCH_CONCURRENCY` 控制同一文档内关系抽取 batch 的并发数。默认保留 `small_section` 细粒度以保证召回，同时用并发 10 降低远程 API 的总等待时间；如果上游服务不稳定，可以临时改为 `8`、`6` 或更低。
-
-## 手动启动后端
+终端一：
 
 ```bash
-cd backend
-source .venv/bin/activate
-python run_api.py
+./scripts/start-backend.sh
 ```
 
-另开终端启动 Worker：
+终端二：
 
 ```bash
-cd backend
-source .venv/bin/activate
-python run_worker.py
+./scripts/start-frontend.sh
 ```
+
+后端脚本同时启动 API 和 Worker，前端脚本首次会自动安装依赖。访问 [http://127.0.0.1:5173](http://127.0.0.1:5173)；按 `Ctrl+C` 停止后端服务。
 
 健康检查：
 
@@ -196,21 +145,16 @@ python run_worker.py
 curl http://127.0.0.1:5000/api/health
 ```
 
-## 手动启动前端
+## 关系抽取粒度
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+上传时可选择以下粒度，默认 `small_section`：
 
-前端默认使用 `/api`，Vite 会把请求代理到 `http://127.0.0.1:5000`，因此默认不需要 `.env` 或 `.env.example`。
+- `small_section`：按 `1.1`、`4.4` 等小节切分，默认
+- `chapter`：按 `一、`、`二、` 等大章切分
+- `paragraph`：按 Markdown 段落切分
+- `fixed_sections`：每 N 个小节一批
 
-如需指向远程后端：
-
-```bash
-VITE_API_BASE_URL=http://your-host:5000/api npm run dev
-```
+其他批处理和并发参数见 [backend/.env.example](backend/.env.example)。
 
 ## 常用接口
 
