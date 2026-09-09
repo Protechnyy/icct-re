@@ -1,4 +1,4 @@
-import { Badge, Button, Message, Tooltip } from "@arco-design/web-react";
+import { Badge, Button, Message, Modal, Tooltip } from "@arco-design/web-react";
 import {
   IconApps,
   IconRobot,
@@ -8,7 +8,7 @@ import ResultViewer from "./components/ResultViewer";
 import SkillManager from "./components/SkillManager";
 import TaskTable from "./components/TaskTable";
 import UploadPanel from "./components/UploadPanel";
-import { getHealth, getTaskResult, getTaskStatus, uploadFiles } from "./lib/api";
+import { exportTaskCsv, getHealth, getTaskResult, getTaskStatus, uploadFiles } from "./lib/api";
 
 const terminalStatuses = ["succeeded", "failed", "cancelled"];
 
@@ -102,6 +102,52 @@ export default function App() {
     submitFiles(rawFiles);
   }
 
+  async function handleTaskAction(action, task) {
+    const taskId = task.task_id;
+    try {
+      if (action === "view") {
+        setActiveTaskId(taskId);
+        if (task.status === "succeeded" && !resultsRef.current[taskId]) {
+          const result = await getTaskResult(taskId);
+          setResults((current) => ({ ...current, [taskId]: result }));
+        }
+      } else if (action === "refresh") {
+        const status = await getTaskStatus(taskId);
+        setTasks((current) => current.map((item) => item.task_id === taskId
+          ? { ...item, ...status, metadata: { ...item.metadata, ...status.metadata } } : item));
+        if (status.status === "succeeded") {
+          const result = await getTaskResult(taskId);
+          setResults((current) => ({ ...current, [taskId]: result }));
+        }
+        Message.success("任务状态已刷新");
+      } else if (action === "export") {
+        const blob = await exportTaskCsv(taskId);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${task.filename.replace(/\.[^.]+$/, "")}_relations.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } else if (action === "error") {
+        Modal.error({ title: "任务错误详情", content: <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "60vh", overflowY: "auto" }}>{task.error}</div> });
+      } else if (action === "remove") {
+        const remaining = tasksRef.current.filter((item) => item.task_id !== taskId);
+        setTasks((current) => current.filter((item) => item.task_id !== taskId));
+        setResults((current) => {
+          const next = { ...current };
+          delete next[taskId];
+          return next;
+        });
+        setActiveTaskId((current) => current === taskId ? remaining[0]?.task_id || null : current);
+        Message.success("已从列表移除，服务器文件保留");
+      }
+    } catch (error) {
+      Message.error(`操作失败：${String(error.message || error)}`);
+    }
+  }
+
   function updateFiles(nextFileList) {
     setFileList(nextFileList);
   }
@@ -149,7 +195,7 @@ export default function App() {
                 relationOptions={relationOptions}
                 onRelationOptionsChange={setRelationOptions}
               />
-              <TaskTable tasks={tasks} onSelectTask={setActiveTaskId} activeTaskId={activeTaskId} />
+              <TaskTable tasks={tasks} onSelectTask={setActiveTaskId} activeTaskId={activeTaskId} onTaskAction={handleTaskAction} />
             </aside>
             <section className="workbench-main">
               <ResultViewer task={activeTask} result={activeTaskId ? results[activeTaskId] : null} />

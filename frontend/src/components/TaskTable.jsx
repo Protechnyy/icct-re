@@ -1,5 +1,5 @@
-import { Badge, Button, Card, Empty, Input, Progress, Select, Tag, Tooltip } from "@arco-design/web-react";
-import { IconCheckCircle, IconCloseCircle, IconFile, IconFileImage, IconFilePdf, IconMore, IconSearch, IconSync } from "@arco-design/web-react/icon";
+import { Button, Card, Dropdown, Empty, Input, Menu, Progress, Select, Tag, Tooltip } from "@arco-design/web-react";
+import { IconFile, IconFileImage, IconFilePdf, IconMore, IconSearch } from "@arco-design/web-react/icon";
 import { useMemo, useState } from "react";
 
 export const STATUS_CONFIG = {
@@ -27,11 +27,25 @@ function relativeTime(value) {
   return new Date(value).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
 }
 
-function TaskListItem({ task, active, onSelect }) {
+function TaskListItem({ task, active, onSelect, onAction }) {
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const finished = ["succeeded", "failed", "cancelled"].includes(task.status);
+
+  async function handleAction(action) {
+    setMenuVisible(false);
+    setBusy(true);
+    try {
+      await onAction(action, task);
+    } finally {
+      setBusy(false);
+    }
+  }
   const config = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知", stage: task.stage || "处理中" };
   const stage = task.stage && task.stage !== task.status ? task.stage : config.stage;
   return (
-    <button className={`task-list-item ${active ? "is-active" : ""}`} onClick={() => onSelect(task.task_id)}>
+    <div className={`task-list-item ${active ? "is-active" : ""}`}>
+      <button type="button" className="task-select" title={task.filename} aria-label={`查看任务：${task.filename}`} aria-pressed={active} onClick={() => onSelect(task.task_id)} />
       <div className="task-item-topline">
         <div className="task-file-title">
           <span className="task-file-icon">{taskIcon(task.filename)}</span>
@@ -44,14 +58,31 @@ function TaskListItem({ task, active, onSelect }) {
       {task.error && <div className="task-error" title={task.error}>{task.error}</div>}
       <div className="task-item-footer">
         <span>{relativeTime(task.created_at)}</span>
-        <span>{task.status === "succeeded" ? "已完成" : "处理中"}</span>
-        <IconMore className="task-more" />
+        <span>{config.label}</span>
+        <Dropdown
+          trigger="click"
+          position="br"
+          popupVisible={menuVisible}
+          onVisibleChange={setMenuVisible}
+          droplist={(
+            <Menu onClickMenuItem={handleAction}>
+              <Menu.Item key="view">查看详情</Menu.Item>
+              <Menu.Item key="refresh">刷新状态</Menu.Item>
+              {task.status === "succeeded" && <Menu.Item key="export">导出 CSV</Menu.Item>}
+              {task.error && <Menu.Item key="error">查看错误详情</Menu.Item>}
+              {finished && <Menu.Item key="remove">从列表移除</Menu.Item>}
+            </Menu>
+          )}
+        >
+          <Button type="text" size="mini" className="task-more" icon={<IconMore />} loading={busy} disabled={busy}
+            aria-label={`任务操作：${task.filename}`} aria-haspopup="menu" aria-expanded={menuVisible} />
+        </Dropdown>
       </div>
-    </button>
+    </div>
   );
 }
 
-export default function TaskTable({ tasks, onSelectTask, activeTaskId }) {
+export default function TaskTable({ tasks, onSelectTask, activeTaskId, onTaskAction }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const filteredTasks = useMemo(() => tasks.filter((task) => {
@@ -70,7 +101,7 @@ export default function TaskTable({ tasks, onSelectTask, activeTaskId }) {
       </div>
       <div className="task-list-scroll">
         {filteredTasks.length ? filteredTasks.map((task) => (
-          <TaskListItem key={task.task_id} task={task} active={activeTaskId === task.task_id} onSelect={onSelectTask} />
+          <TaskListItem key={task.task_id} task={task} active={activeTaskId === task.task_id} onSelect={onSelectTask} onAction={onTaskAction} />
         )) : <Empty description="暂无抽取任务" />}
       </div>
     </Card>
