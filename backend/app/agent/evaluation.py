@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from . import verify_document
+from .trace import Trace
 from .document import compact
 from .relations import assign_relation_ids
 
@@ -117,15 +118,18 @@ def replay_file(input_path, output_root, config, *, annotations=None, model=None
     before = assign_relation_ids(before)
     sections = result.get("relation_sections") or [{"section_id": "document", "title": "原文", "text": result["document_text"],
         "paragraphs": [{"content": paragraph, "page": None} for paragraph in result["document_text"].split("\n\n") if paragraph.strip()]}]
+    identity = str(result.get("document_meta", {}).get("task_id") or source.parent.name)
+    trace = Trace(progress_callback, document_task_id=identity)
+    trace.emit("phase_start", summary="智能体校验已开始")
     after, agent_result = verify_document(before, sections, result["document_text"], replace(config, agent_enabled=True),
-                                          progress_callback, model=model)
+                                          progress_callback, model=model, trace=trace)
+    trace.finish(agent_result)
     replayed = deepcopy(result)
     replayed.update({"pre_agent_relations": before, "final_relations": after,
                      "final_relation_list": {"relation_list": after}, "agent_result": agent_result})
     if "ocr_summary" in replayed:
         replayed["ocr_summary"]["relation_count"] = len(after)
-    identity = str(result.get("document_meta", {}).get("task_id") or source.parent.name)
-    # Restrict user-supplied identifiers to one safe directory component.
+    # 用户提供的编号只能作为单个目录名称。
     if identity in ("", ".", "..") or Path(identity).name != identity or "/" in identity or "\\" in identity:
         raise ValueError("输入的 task_id 不能用于输出目录")
     destination = output_root / identity

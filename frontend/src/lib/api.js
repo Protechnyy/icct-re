@@ -9,6 +9,7 @@ export async function uploadFiles(fileList, relationOptions = {}) {
   if (relationOptions.batch_size) {
     formData.append("batch_size", String(relationOptions.batch_size));
   }
+  formData.append("fast_mode", String(relationOptions.fast_mode === true));
   const response = await fetch(`${API_BASE_URL}/upload`, {
     method: "POST",
     body: formData,
@@ -25,6 +26,26 @@ export async function getTaskStatus(taskId) {
     throw new Error(await response.text());
   }
   return response.json();
+}
+
+export async function getAgentEvents(taskId, afterSeq = 0, signal) {
+  const response = await fetch(`${API_BASE_URL}/agent/${encodeURIComponent(taskId)}/events?after_seq=${afterSeq}&limit=100`, { signal });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function getAgentEvent(taskId, seq, signal) {
+  const response = await fetch(`${API_BASE_URL}/agent/${encodeURIComponent(taskId)}/events/${seq}`, { signal });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function refreshTaskStatus(task) {
+  try {
+    return { ...await getTaskStatus(task.task_id), request_error: null };
+  } catch (error) {
+    return { ...task, request_error: `状态读取失败，下次查询将继续尝试：${String(error.message || error)}` };
+  }
 }
 
 export async function getTaskResult(taskId) {

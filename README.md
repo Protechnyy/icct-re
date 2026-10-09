@@ -102,7 +102,7 @@ VLLM_ENABLE_THINKING=false
 source ~/venvs/vllm-qwen/bin/activate
 
 CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0 \
-vllm serve Qwen/Qwen3-32B-AWQ \
+vllm serve Qwen/Qwen3.5-27b \
   --host 0.0.0.0 \
   --port 8000 \
   --api-key EMPTY \
@@ -167,6 +167,8 @@ curl http://127.0.0.1:5000/api/health
 | `POST` | `/api/upload` | 上传文件，表单字段为 `files` |
 | `GET` | `/api/status/<task_id>` | 查询任务状态和进度 |
 | `GET` | `/api/result/<task_id>` | 获取 OCR、抽取阶段和最终关系结果 |
+| `GET` | `/api/agent/<task_id>/events` | 分页读取智能体执行事件 |
+| `GET` | `/api/agent/<task_id>/events/<seq>` | 读取指定事件的完整结构化详情 |
 | `GET` | `/api/health` | 检查 Redis、PaddleOCR-VL 和 vLLM |
 | `GET` | `/api/skills` | 获取 Skill4RE skill 列表 |
 | `POST` | `/api/skills` | 新增 skill |
@@ -183,7 +185,7 @@ AGENT_API_KEY=your_bailian_api_key
 AGENT_MODEL=qwen3.8-27b
 ```
 
-核查使用独立密钥配置，不会自动读取抽取阶段的密钥。即使两个阶段使用同一部署，也须分别配置。模型调用显式关闭思考，轨迹仅保存工具参数、结果摘要和任务结论。
+核查使用独立密钥配置，不会自动读取抽取阶段的密钥。即使两个阶段使用同一部署，也须分别配置。模型调用显式关闭思考，执行记录包含任务规划、请求和工具调用的状态、参数、原文依据及任务结论。
 
 | 配置项 | 默认值 | 含义 |
 | --- | --- | --- |
@@ -198,7 +200,44 @@ AGENT_MODEL=qwen3.8-27b
 | `AGENT_TIMEOUT_SECONDS` | `600` | 核查阶段总时限，单位秒 |
 | `AGENT_MAX_ADDED_PER_TASK` | `5` | 单任务补充关系上限 |
 
-核查期间任务状态为 `verifying`，页面显示已完成任务数、当前任务和最近轨迹；结果页显示改动摘要、删除存档及逐关系详情。阶段失败时保留核查前的抽取结果，任务仍可成功；部分完成只保留已生效的合法改动，不能视为整篇已完成核查。关闭时抽取输出行为保持不变。回滚只需设回 `AGENT_ENABLED=false` 并重启 worker。
+核查期间任务状态为 `verifying`，任务详情标题下方展示智能体过程，结束后仍然可以查看。左侧列出任务，右侧显示执行时间线，包含以下四类信息：
+
+- **规划任务**：任务类型、目标、理由、来源和执行状态。
+- **执行步骤**：模型等待、工具名称、请求参数和耗时，同一次调用的开始与结束显示为一个步骤。
+- **查看依据**：展开步骤读取完整详情，显示原文、小节、页码、精确命中或候选原文；位置缺失和历史详情缺失均有说明。
+- **形成结论**：任务结论、关系或实体的具体改动、原文依据及最终采用情况。关系表中的核查状态可以打开逐关系详情。
+
+过程自动跟随当前任务。选择历史任务、滚动时间线或使用键盘阅读后暂停跟随，点击“跟随当前任务”恢复。展开状态按文档保留；“折叠过程”可以增加结果区域的空间。任务刷新后从首条事件恢复，切换任务时取消此前的读取请求。事件读取和详情读取失败分别提示，可以重新读取，已经读取的内容继续保留。
+
+阶段失败时保留核查前的抽取结果，文档任务仍可成功；部分完成只保留已生效的合法改动。核查状态与文档处理状态分别展示。关闭核查时设置 `AGENT_ENABLED=false` 并重启 Worker。
+
+### 执行事件查询
+
+```bash
+curl --noproxy '*' 'http://127.0.0.1:5000/api/agent/<task_id>/events?after_seq=0&limit=100'
+curl --noproxy '*' 'http://127.0.0.1:5000/api/agent/<task_id>/events/<seq>'
+```
+
+`after_seq` 为已经读取的最后序号，从 `0` 开始；`limit` 默认为 `100`，允许 `1` 至 `200`。返回 `events`、`next_seq`、`last_seq`、`has_more`、阶段状态和任务清单。`has_more=true` 时立即使用 `next_seq` 请求下一页，之后每 2.5 秒继续读取。参数无效返回 HTTP 400，任务或详情不存在返回 HTTP 404。
+
+新记录使用 `version: 2`。每篇文档的 `seq` 从 `1` 连续增加，包含 `document_task_id`、核查 `task_id`、UTC `timestamp`、`kind`、`phase`、`status`、`call_id`、`args`、`elapsed_seconds` 和最多 500 个字符的 `summary`。原有 `result` 摘要及 `truncated` 保留；完整 `result_data` 通过详情接口读取，`detail_available` 表示是否存在结构化结果。
+
+事件类型包括 `phase_start`、`plan_start`、`plan`、`task_start`、`model_start`、`model_end`、`tool_start`、`tool`、`conclusion`、`task_end` 和 `phase_end`。同一次模型或工具调用使用相同 `call_id`；改动使用稳定 `change_id`，`phase_end` 中的 `accepted_change_ids` 和 `discarded_change_ids` 说明最终采用情况。
+
+Redis 按文档保存事件摘要 List、详情 Hash 和元数据 Hash，同一次 transaction 完成写入后发布进度快照。`agent_progress.recent_events` 保留最近 20 条，完整事件可通过上述接口读取。旧结果读取其已保存的轨迹，缺失结构化详情时显示“结构化详情未记录”。
+
+### 真实数据与服务检查
+
+下面的检查连接已配置的真实 Redis，创建独立的 `agent-event-check-*` 任务，使用已有结果中的原文执行工具，检查并发序号、完整详情、拒绝、未命中、分页和 HTTP 状态。`--history-result` 可指定已保存的旧核查结果，检查材料保存到 `--output-dir`：
+
+```bash
+STORAGE_ROOT="$PWD/data" backend/.venv/bin/python scripts/check-agent-execution-events.py \
+  data/results/<task_id>/result.json \
+  --history-result data/agent_replays/<run>/<task_id>/result.json \
+  --output-dir .impeccable/checks/agent-events
+```
+
+增加 `--live --max-calls 24` 会将输入原文发送到配置的真实核查模型，并保存核查结果与阶段结束事件；设置 `--max-calls 1` 可以检查预算受限状态。执行前须确认原文允许发送到该模型服务。
 
 只重放已保存的结果，无需 OCR、Redis 或前端，输出目录必须与输入目录独立：
 

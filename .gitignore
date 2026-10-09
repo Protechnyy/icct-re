@@ -11,3 +11,6 @@ data/
 .claude/
 test/
 .agents/
+.impeccable/
+AGENTS.md
+.codex/

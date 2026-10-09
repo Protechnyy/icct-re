@@ -1,9 +1,24 @@
-import { Alert, Button, Card, Empty, Input, Message, Space, Table, Tabs, Tag, Tooltip, Typography } from "@arco-design/web-react";
+import Alert from "@arco-design/web-react/es/Alert";
+import Button from "@arco-design/web-react/es/Button";
+import Card from "@arco-design/web-react/es/Card";
+import Empty from "@arco-design/web-react/es/Empty";
+import Input from "@arco-design/web-react/es/Input";
+import Message from "@arco-design/web-react/es/Message";
+import Space from "@arco-design/web-react/es/Space";
+import Table from "@arco-design/web-react/es/Table";
+import Tabs from "@arco-design/web-react/es/Tabs";
+import Tag from "@arco-design/web-react/es/Tag";
+import Tooltip from "@arco-design/web-react/es/Tooltip";
+import Typography from "@arco-design/web-react/es/Typography";
 import { IconCode, IconCopy, IconDownload, IconFile, IconRefresh, IconSearch } from "@arco-design/web-react/icon";
-import { useEffect, useMemo, useState } from "react";
+import { cloneElement, useEffect, useMemo, useState } from "react";
 import { exportTaskCsv } from "../lib/api";
 import { STATUS_CONFIG } from "./TaskTable";
-import { AgentProgress, AgentSummary, AgentRelationDetails, VERIFICATION_LABELS, hasAgentResult } from "./AgentVerification";
+import { AgentWorkspace, AgentRelationDetails, VERIFICATION_LABELS, hasAgentResult } from "./AgentVerification";
+import ResultEmptyState from "./ResultEmptyState";
+import "@arco-design/web-react/es/Table/style/css.js";
+import "@arco-design/web-react/es/Tabs/style/css.js";
+import "@arco-design/web-react/es/Typography/style/css.js";
 
 function downloadFile(filename, data, type = "application/json") {
   const blob = new Blob([typeof data === "string" ? data : JSON.stringify(data, null, 2)], { type });
@@ -37,7 +52,7 @@ function JsonViewer({ data, filename }) {
   const pretty = useMemo(() => JSON.stringify(data, null, 2), [data]);
   return <div className="json-viewer">
     <div className="json-toolbar"><span><IconCode /> JSON 结果</span><Space size="mini"><Button size="mini" type="text" icon={<IconCopy />} onClick={() => copyText(pretty)}>复制</Button><Button size="mini" type="text" icon={<IconDownload />} onClick={() => downloadFile(filename, data)}>下载</Button></Space></div>
-    <pre>{pretty}</pre>
+    <pre tabIndex={0} aria-label="JSON 抽取结果">{pretty}</pre>
   </div>;
 }
 
@@ -140,7 +155,6 @@ function ExecutionLog({ task, result }) {
     {task.error && <Alert type="error" title="任务错误" content={task.error} closable={false} />}
     <div className="log-row"><span>任务创建时间</span><span>{formatDateTime(task.created_at)}</span><Tag color="green">已记录</Tag></div>
     <div className="log-row"><span>当前阶段</span><span>{STAGE_LABELS[task.stage] || "处理中"}</span><Tag color={task.status === "failed" ? "red" : "arcoblue"}>{statusLabel(task.status)}</Tag></div>
-    {task.stage === "agent_verification" && <AgentProgress progress={task.agent_progress} />}
     {Object.entries(timing).map(([stage, value]) => <div className="log-row" key={stage}><span>{TIMING_LABELS[stage] || "处理耗时"}</span><span>{formatDuration(value)}</span><Tag>耗时</Tag></div>)}
   </div>;
 }
@@ -154,23 +168,22 @@ function splitModeLabel(splitMode) {
     small_section: "小节",
     chapter: "章节",
     paragraph: "段落",
-    fixed_sections: "固定长度",
+    fixed_sections: "固定小节数",
   }[splitMode] || "小节";
 }
 
-export default function ResultViewer({ task, result }) {
+export default function ResultViewer({ task, result, agentEvents, resultError, onRetryResult }) {
   const [activeTab, setActiveTab] = useState("preview");
   const [exportingCsv, setExportingCsv] = useState(false);
   const [selectedRelation, setSelectedRelation] = useState(null);
   useEffect(() => setSelectedRelation(null), [task?.task_id]);
-  if (!task) return <Card className="result-empty-card"><Empty description={<div><div className="empty-title">选择一个任务查看抽取结果</div><div className="empty-description">从左侧任务列表中选择一个任务，查看文档内容和关系抽取结果。</div></div>} /></Card>;
+  if (!task) return <ResultEmptyState />;
   const status = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知" };
   const relations = getRelations(result);
   const entities = getEntities(relations);
   const showAgent = hasAgentResult(result);
   const entityColumns = [
     { title: "实体名称", dataIndex: "name", ellipsis: true },
-    { title: "实体类型", dataIndex: "type", width: 120, render: (value) => <Tag color="arcoblue">{value}</Tag> },
     { title: "来源段落", width: 360, render: (_, item) => <SourceParagraphs paragraphs={item.sourceParagraphs} /> },
   ];
   const relationColumns = [
@@ -187,7 +200,23 @@ export default function ResultViewer({ task, result }) {
     { key: "json", title: "JSON", content: <JsonViewer data={result || { status: task.status }} filename={`${task.filename}.json`} /> },
     { key: "logs", title: "运行日志", content: <ExecutionLog task={task} result={result} /> },
   ];
-  const activeContent = tabItems.find((item) => item.key === activeTab)?.content || tabItems[0].content;
+  function renderTabHeader(tabProps, DefaultTabHeader) {
+    return <div role="tablist" aria-label="抽取结果" aria-orientation="horizontal" onKeyDown={(event) => {
+      const tab = event.target.closest('[role="tab"]');
+      if (!tab) return;
+      const tabs = [...event.currentTarget.querySelectorAll('[role="tab"]')];
+      const currentIndex = tabs.indexOf(tab);
+      const nextIndex = { ArrowRight: (currentIndex + 1) % tabs.length, ArrowLeft: (currentIndex + tabs.length - 1) % tabs.length, Home: 0, End: tabs.length - 1 }[event.key];
+      if (nextIndex !== undefined) {
+        event.preventDefault();
+        tabs[nextIndex].focus();
+        setActiveTab(tabItems[nextIndex].key);
+      } else if (event.key === " ") {
+        event.preventDefault();
+        setActiveTab(tabItems[currentIndex].key);
+      }
+    }}><DefaultTabHeader {...tabProps} /></div>;
+  }
   async function handleExportCsv() {
     try {
       setExportingCsv(true);
@@ -203,19 +232,21 @@ export default function ResultViewer({ task, result }) {
   }
   return <Card className="result-workspace" bordered={false}>
     <div className="task-summary-header">
-      <div className="task-summary-main"><div className="summary-file-icon"><IconFile /></div><div><Tooltip content={task.filename}><Typography.Title heading={5} ellipsis={{ showTooltip: true }}>{task.filename}</Typography.Title></Tooltip><div className="task-summary-meta"><Tag color={status.color}>{status.label}</Tag><span>粒度：{splitModeLabel(task.metadata?.split_mode)}</span><span>Skill：自动路由</span><span>创建于 {task.created_at ? new Date(task.created_at).toLocaleString("zh-CN") : "-"}</span></div></div></div>
-      <Space wrap><Tooltip content="当前后端暂未提供重新执行接口"><Button icon={<IconRefresh />} disabled>重新执行</Button></Tooltip><Button icon={<IconDownload />} onClick={() => result && downloadFile(`${task.filename}.json`, result)} disabled={!result}>导出 JSON</Button><Button type="primary" icon={<IconDownload />} loading={exportingCsv} disabled={!result} onClick={handleExportCsv}>导出 CSV</Button></Space>
+      <div className="task-summary-main"><div className="summary-file-icon"><IconFile /></div><div className="task-summary-text"><Tooltip content={task.filename}><Typography.Title heading={2} ellipsis={{ showTooltip: true }}>{task.filename}</Typography.Title></Tooltip><div className="task-summary-meta"><Tag color={status.color}>{status.label}</Tag><span>粒度：{splitModeLabel(task.metadata?.split_mode)}</span><span>Skill：自动路由</span><span>创建于 {task.created_at ? new Date(task.created_at).toLocaleString("zh-CN") : "-"}</span></div></div></div>
+      <Space className="task-summary-actions" wrap><Tooltip content="当前后端暂未提供重新执行接口"><Button icon={<IconRefresh />} disabled>重新执行</Button></Tooltip><Button icon={<IconDownload />} onClick={() => result && downloadFile(`${task.filename}.json`, result)} disabled={!result}>导出 JSON</Button><Button type="primary" icon={<IconDownload />} loading={exportingCsv} disabled={!result} onClick={handleExportCsv}>导出 CSV</Button></Space>
     </div>
-    {showAgent && <AgentSummary agent={result.agent_result} onSelectRelation={setSelectedRelation} />}
+    <AgentWorkspace task={task} agent={result?.agent_result} stream={agentEvents} />
     {showAgent && <AgentRelationDetails relation={selectedRelation} agent={result.agent_result} onClose={() => setSelectedRelation(null)} />}
+    {resultError && <Alert className="result-request-error" type="error" title="读取抽取结果失败" content={resultError} action={<Button onClick={onRetryResult}>重新读取</Button>} />}
     {!result && task.status === "failed" ? <Alert type="error" title="任务执行失败" content={task.error || "请检查运行日志后重新执行任务。"} closable={false} /> : null}
-    {!result && task.status !== "failed" ? <div className="result-pending">{task.stage === "agent_verification" && <AgentProgress progress={task.agent_progress} />}<Empty description="结果尚未就绪，系统将持续更新任务进度。" /></div> : <>
-      <Tabs activeTab={activeTab} onChange={setActiveTab} type="line" animation={false}>
-        {tabItems.map((item) => <Tabs.TabPane key={item.key} title={item.title} />)}
+    {!result && task.status !== "failed" ? <div className="result-pending"><Empty description="结果尚未就绪，系统将持续更新任务进度。" /></div> : <>
+      <Tabs className="result-tabs" activeTab={activeTab} onChange={setActiveTab} type="line" animation={false} destroyOnHide renderTabHeader={renderTabHeader} renderTabTitle={(node, { isActive }) => cloneElement(node, { tabIndex: isActive ? 0 : -1 })}>
+        {tabItems.map((item) => <Tabs.TabPane key={item.key} title={item.title}>
+          <div className="result-tab-body" tabIndex={0} aria-label={`${item.title}内容`}>
+            {item.content}
+          </div>
+        </Tabs.TabPane>)}
       </Tabs>
-      <div className={`result-tab-body ${activeTab === "json" ? "is-json" : ""}`}>
-        {activeContent}
-      </div>
     </>}
   </Card>;
 }

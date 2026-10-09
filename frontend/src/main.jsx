@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import "@arco-design/web-react/dist/css/arco.css";
+import "./lib/arcoStyles";
 import App from "./App";
 import "./index.css";
 

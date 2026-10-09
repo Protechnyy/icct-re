@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 import json
 import re
 import time
@@ -21,6 +22,7 @@ from .config import (
 from .paddle_ocr import PaddleOcrClient
 from .agent import verify_document
 from .agent.relations import assign_relation_ids
+from .agent.trace import Trace
 from .skill4re_client import RelationExtractor, Skill4ReClient
 from .types import Chunk
 from .utils import chunk_text_with_page_map, utcnow_iso
@@ -61,6 +63,10 @@ class DocumentPipeline:
         file_path = Path(payload["file_path"])
         filename = payload["filename"]
         file_type = int(payload["file_type"])
+        fast_mode = payload.get("fast_mode", not self.config.agent_enabled)
+        if not isinstance(fast_mode, bool):
+            raise ValueError("fast_mode must be a boolean")
+        agent_config = replace(self.config, agent_enabled=not fast_mode)
 
         self.task_store.update_task(task_id, status="ocr_running", stage="layout_parsing", progress=10, error=None)
         stage_started_at = time.perf_counter()
@@ -101,21 +107,25 @@ class DocumentPipeline:
         )
         pre_agent_relations = assign_relation_ids(final_relations)
         agent_result = {"status": "disabled"}
-        if self.config.agent_enabled:
+        if agent_config.agent_enabled:
             self.task_store.update_task(task_id, status="verifying", stage="agent_verification", progress=70)
             stage_started_at = time.perf_counter()
             def report_agent_progress(agent_progress):
                 fraction = agent_progress.get("finished_tasks", 0) / max(1, agent_progress.get("total_tasks", 0))
                 self.task_store.update_task(task_id, stage="agent_verification",
                     progress=min(84, 70 + int(14 * fraction)), agent_progress=agent_progress)
+            trace = Trace(report_agent_progress, document_task_id=task_id,
+                          event_callback=lambda event: self.task_store.append_agent_event(task_id, event))
+            trace.emit("phase_start", summary="智能体校验已开始")
             try:
                 final_relations, agent_result = verify_document(
-                    pre_agent_relations, relation_sections, document_text, self.config, report_agent_progress)
+                    pre_agent_relations, relation_sections, document_text, agent_config, report_agent_progress, trace=trace)
             except Exception as exc:
                 final_relations = assign_relation_ids(pre_agent_relations)
                 agent_result = {"status": "failed", "reason": "核查阶段失败：" + type(exc).__name__,
                                 "summary": {}, "tasks": [], "trace": [], "removed_relations": [],
                                 "entity_aliases": {}, "changes": []}
+            trace.finish(agent_result)
             timing["agent_verification_seconds"] = round(time.perf_counter() - stage_started_at, 4)
 
         self.task_store.update_task(task_id, status="merging", stage="document_merge", progress=85)

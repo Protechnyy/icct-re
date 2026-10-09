@@ -1,17 +1,17 @@
-"""The sole production integration point with LangGraph/LangChain."""
 from __future__ import annotations
 
 from copy import deepcopy
 import json
 import logging
 import time
-from typing import Any, TypedDict
+from typing import Annotated, Any, TypedDict
 import warnings
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import InjectedToolCallId, StructuredTool
+from pydantic import create_model
 from langchain_openai import ChatOpenAI
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
@@ -76,22 +76,23 @@ def task_tools(workspace, task, trace, budget):
     for name in TASK_TOOLS[task["type"]]:
         function = functions[name]
         schema_tool = StructuredTool.from_function(function)
-        def execute(tool_name=name, tool_function=function, **arguments):
-            # Tools have no external access, but must still stop writes at the deadline.
+        call_schema = create_model(f"{name}Call", __base__=schema_tool.args_schema,
+                                   tool_call_id=(Annotated[str, InjectedToolCallId], ...))
+        def execute(tool_call_id, tool_name=name, tool_function=function, **arguments):
+            # 到达阶段时限时立即停止工具操作。
             if budget.clock() >= budget.deadline:
                 raise BudgetExhausted("核查阶段超时")
             started = time.monotonic()
-            try:
-                result = tool_function(**arguments)
-            except Exception as exc:
-                result = {"error": "工具执行失败：" + type(exc).__name__}
+            result = tool_function(**arguments)
             relation_ids = result.get("change", {}).get("relation_ids", [])
             task["relation_ids"] = list(dict.fromkeys([*task.get("relation_ids", []), *relation_ids]))
             trace.emit("tool", identity, result, elapsed_seconds=time.monotonic() - started,
-                       tool=tool_name, args=arguments, relation_ids=relation_ids)
+                       tool=tool_name, args=arguments, relation_ids=relation_ids,
+                       call_id=tool_call_id, status="rejected" if result.get("error") else "completed")
+            trace.finished_calls.add(tool_call_id)
             return result
         tools.append(StructuredTool(name=name, description=schema_tool.description,
-                                    args_schema=schema_tool.args_schema, func=execute))
+                                    args_schema=call_schema, func=execute))
     return tools
 
 
@@ -107,10 +108,10 @@ class VerificationState(TypedDict, total=False):
     result: dict
 
 
-def run_verification(relations, sections, document_text, config, progress_callback=None, model=None):
+def run_verification(relations, sections, document_text, config, progress_callback=None, model=None, *, trace=None):
     original = deepcopy(relations)
-    budget = Budget(config.agent_max_llm_calls, config.agent_timeout_seconds)
-    trace = Trace(progress_callback)
+    trace = trace if trace is not None else Trace(progress_callback)
+    budget = Budget(config.agent_max_llm_calls, config.agent_timeout_seconds, trace=trace)
     workspace = RelationWorkspace(relations, DocumentIndex(sections, document_text), config.agent_max_added_per_task)
     if config.agent_concurrency > 1:
         LOGGER.warning("AGENT_CONCURRENCY=%s is clamped to 1; verification tasks execute serially", config.agent_concurrency)
@@ -121,12 +122,14 @@ def run_verification(relations, sections, document_text, config, progress_callba
             base_url=config.agent_base_url, timeout=config.agent_timeout_seconds, max_retries=0,
             extra_body={"enable_thinking": False}, callbacks=[],
             max_tokens=2048)
+    planning_model = model.bind(max_tokens=65536)
     counted_model = BudgetedModel(inner=model, budget=budget)
 
     def plan(state):
         started = time.monotonic()
+        trace.emit("plan_start", summary="正在规划核查任务")
         def call(prompt):
-            response = budget.invoke(model, [("system", "只输出核查任务清单 JSON，不输出思考过程。"), ("user", prompt)])
+            response = budget.invoke(planning_model, [("system", "只输出核查任务清单 JSON，不输出思考过程。"), ("user", prompt)])
             return response.content
         tasks, metadata = plan_tasks(call, workspace.relations, sections, document_text, config.agent_max_tasks)
         trace.tasks = tasks
@@ -166,10 +169,18 @@ def run_verification(relations, sections, document_text, config, progress_callba
                     for message in payload.get("messages", []):
                         if isinstance(message, AIMessage):
                             tool_calls.update({call["id"]: call for call in message.tool_calls})
+                            for call in message.tool_calls:
+                                trace.tool_calls[call["id"]] = time.monotonic()
+                                trace.emit("tool_start", task["id"], tool=call["name"], args=call["args"],
+                                           call_id=call["id"], summary="正在执行工具")
                         if isinstance(message, ToolMessage) and message.status == "error":
                             call = tool_calls.get(message.tool_call_id, {})
-                            trace.emit("tool", task["id"], message.content, tool=message.name,
-                                       args=call.get("args", {}), error=True)
+                            if message.tool_call_id not in trace.finished_calls:
+                                trace.emit("tool", task["id"], {"error": message.content}, tool=message.name,
+                                           args=call.get("args", {}), error=True, status="error",
+                                           call_id=message.tool_call_id,
+                                           elapsed_seconds=time.monotonic() - trace.tool_calls[message.tool_call_id])
+                                trace.finished_calls.add(message.tool_call_id)
                         if isinstance(message, AIMessage) and not message.tool_calls:
                             last_answer = message.content if isinstance(message.content, str) else "\n".join(
                                 block.get("text", "") for block in message.content

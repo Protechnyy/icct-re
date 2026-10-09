@@ -1,5 +1,12 @@
-import { Button, Card, InputNumber, Radio, Upload } from "@arco-design/web-react";
-import { IconDelete, IconFile, IconFileImage, IconFilePdf, IconUpload } from "@arco-design/web-react/icon";
+import Button from "@arco-design/web-react/es/Button";
+import Card from "@arco-design/web-react/es/Card";
+import InputNumber from "@arco-design/web-react/es/InputNumber";
+import Radio from "@arco-design/web-react/es/Radio";
+import Upload from "@arco-design/web-react/es/Upload";
+import { IconDelete, IconFile, IconFileImage, IconFilePdf, IconThunderbolt, IconUpload } from "@arco-design/web-react/icon";
+import "@arco-design/web-react/es/InputNumber/style/css.js";
+import "@arco-design/web-react/es/Radio/style/css.js";
+import "@arco-design/web-react/es/Upload/style/css.js";
 
 function formatSize(bytes) {
   if (bytes === undefined || bytes === null) return "-";
@@ -33,11 +40,11 @@ export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, su
         onChange={(nextFileList) => onChange(nextFileList)}
         className="document-uploader"
       >
-        <div className="upload-trigger">
+        <button type="button" className="upload-trigger" aria-label="选择文档文件">
           <IconUpload className="upload-icon" />
           <div className="upload-title">点击或拖拽文件到此处上传</div>
           <div className="upload-hint">支持 PDF、PNG、JPG、JPEG，可批量上传</div>
-        </div>
+        </button>
       </Upload>
       {fileList.length > 0 && (
         <div className="selected-file-list">
@@ -49,7 +56,7 @@ export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, su
                 <span title={file.name} className="selected-file-name">{file.name}</span>
                 <span className="selected-file-size">{formatSize(file.size)}</span>
               </div>
-              <Button type="text" status="danger" size="mini" icon={<IconDelete />} onClick={() => onRemove(file)} />
+              <Button type="text" status="danger" size="mini" icon={<IconDelete />} aria-label={`移除文件：${file.name}`} onClick={() => onRemove(file)} />
             </div>
           ))}
         </div>
@@ -60,16 +67,19 @@ export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, su
           <Radio value="small_section">小节</Radio>
           <Radio value="chapter">章节</Radio>
           <Radio value="paragraph">段落</Radio>
-          <Radio value="fixed_sections">固定长度</Radio>
+          <Radio value="fixed_sections">固定小节数</Radio>
         </Radio.Group>
         {splitMode === "fixed_sections" && (
           <div className="fixed-length-row">
-            <span>每段最大长度</span>
-            <InputNumber min={1} max={18000} value={batchSize} onChange={(value) => updateOptions({ batch_size: value || 1 })} suffix="字符" />
+            <label htmlFor="fixed-section-count">每批小节数</label>
+            <InputNumber id="fixed-section-count" min={1} max={Number.MAX_SAFE_INTEGER} precision={0} value={batchSize} onChange={(value) => updateOptions({ batch_size: value || 1 })} suffix="小节" />
           </div>
         )}
       </div>
-      <Button className="submit-task-button" type="primary" long icon={<IconUpload />} loading={submitting} disabled={!fileList.length} onClick={onSubmit}>开始抽取</Button>
+      <div className="extraction-actions">
+        <Button className="submit-task-button" type="primary" icon={<IconUpload />} loading={submitting} disabled={!fileList.length} onClick={onSubmit}>开始抽取</Button>
+        <Button className="fast-mode-button" type={relationOptions.fast_mode ? "secondary" : "outline"} icon={<IconThunderbolt />} aria-pressed={relationOptions.fast_mode === true} disabled={submitting} onClick={() => updateOptions({ fast_mode: !relationOptions.fast_mode })}>极速模式</Button>
+      </div>
     </Card>
   );
 }

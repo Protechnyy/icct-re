@@ -1,0 +1,10 @@
+import "@arco-design/web-react/es/Alert/style/css.js";
+import "@arco-design/web-react/es/Badge/style/css.js";
+import "@arco-design/web-react/es/Button/style/css.js";
+import "@arco-design/web-react/es/Input/style/css.js";
+import "@arco-design/web-react/es/Message/style/css.js";
+import "@arco-design/web-react/es/Modal/style/css.js";
+import "@arco-design/web-react/es/Space/style/css.js";
+import "@arco-design/web-react/es/Spin/style/css.js";
+import "@arco-design/web-react/es/Tag/style/css.js";
+import "@arco-design/web-react/es/Tooltip/style/css.js";

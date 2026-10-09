@@ -47,6 +47,10 @@ def create_app() -> Flask:
             return jsonify({"error": "No files uploaded"}), 400
         try:
             relation_split_config = _relation_split_config_from_form(request.form, config)
+            fast_mode_value = request.form.get("fast_mode")
+            if fast_mode_value is not None and fast_mode_value not in {"true", "false"}:
+                raise ValueError("fast_mode must be true or false")
+            fast_mode = fast_mode_value == "true" if fast_mode_value is not None else not config.agent_enabled
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -70,6 +74,7 @@ def create_app() -> Flask:
                 stage="queued",
                 created_at=utcnow_iso(),
                 updated_at=utcnow_iso(),
+                metadata={"split_mode": relation_split_config["split_mode"], "fast_mode": fast_mode},
             )
             payload = {
                 "file_path": str(target),
@@ -77,6 +82,7 @@ def create_app() -> Flask:
                 "stored_filename": target.name,
                 "file_type": file_type,
                 "relation_split_config": relation_split_config,
+                "fast_mode": fast_mode,
             }
             task_store.create_task(status, payload)
             task_store.enqueue_task(task_id)
@@ -101,6 +107,31 @@ def create_app() -> Flask:
                 return jsonify({"error": "Task not found"}), 404
             return jsonify({"error": "Result not ready"}), 409
         return jsonify(result_payload), 200
+
+    @app.get("/api/agent/<task_id>/events")
+    def agent_events(task_id: str) -> tuple[object, int]:
+        after_seq_text = request.args.get("after_seq", "0")
+        limit_text = request.args.get("limit", "100")
+        if not after_seq_text.isdecimal() or not limit_text.isdecimal():
+            return jsonify({"error": "after_seq 和 limit 必须是整数"}), 400
+        after_seq, limit = int(after_seq_text), int(limit_text)
+        if not 1 <= limit <= 200:
+            return jsonify({"error": "limit 必须介于 1 和 200"}), 400
+        result = task_store.get_agent_events(task_id, after_seq, limit)
+        if result is None:
+            return jsonify({"error": "文档任务不存在"}), 404
+        return jsonify(result), 200
+
+    @app.get("/api/agent/<task_id>/events/<seq>")
+    def agent_event(task_id: str, seq: str) -> tuple[object, int]:
+        if not seq.isdecimal() or int(seq) < 1:
+            return jsonify({"error": "事件序号必须是正整数"}), 400
+        if task_store.get_task(task_id) is None:
+            return jsonify({"error": "文档任务不存在"}), 404
+        event = task_store.get_agent_event(task_id, int(seq))
+        if event is None:
+            return jsonify({"error": "执行事件不存在"}), 404
+        return jsonify(event), 200
 
     @app.get("/api/result/<task_id>/csv")
     def result_csv(task_id: str) -> Response | tuple[object, int]:

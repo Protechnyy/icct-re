@@ -1,6 +1,19 @@
-import { Button, Card, Dropdown, Empty, Input, Menu, Progress, Select, Tag, Tooltip } from "@arco-design/web-react";
+import Button from "@arco-design/web-react/es/Button";
+import Card from "@arco-design/web-react/es/Card";
+import Dropdown from "@arco-design/web-react/es/Dropdown";
+import Empty from "@arco-design/web-react/es/Empty";
+import Input from "@arco-design/web-react/es/Input";
+import Menu from "@arco-design/web-react/es/Menu";
+import Progress from "@arco-design/web-react/es/Progress";
+import Select from "@arco-design/web-react/es/Select";
+import Tag from "@arco-design/web-react/es/Tag";
+import Tooltip from "@arco-design/web-react/es/Tooltip";
 import { IconFile, IconFileImage, IconFilePdf, IconMore, IconSearch } from "@arco-design/web-react/icon";
 import { useMemo, useState } from "react";
+import "@arco-design/web-react/es/Dropdown/style/css.js";
+import "@arco-design/web-react/es/Menu/style/css.js";
+import "@arco-design/web-react/es/Progress/style/css.js";
+import "@arco-design/web-react/es/Select/style/css.js";
 
 export const STATUS_CONFIG = {
   queued: { color: "gray", label: "等待中", stage: "等待任务调度" },
@@ -55,12 +68,11 @@ function TaskListItem({ task, active, onSelect, onAction }) {
         <Tag color={config.color} size="small">{config.label}</Tag>
       </div>
       <div className="task-stage">{stage}</div>
-      {task.stage === "agent_verification" && task.agent_progress && <div className="task-stage">
-        已完成 {task.agent_progress.completed_tasks || 0}/{task.agent_progress.total_tasks || 0}
-        {task.agent_progress.current_task?.reason && <span> · {task.agent_progress.current_task.reason}</span>}
-      </div>}
-      <Progress percent={Number(task.progress) || 0} size="small" showText className="task-progress" />
+      <div role="progressbar" aria-label={`${task.filename}处理进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Number(task.progress) || 0}>
+        <Progress percent={Number(task.progress) || 0} size="small" showText className="task-progress" aria-hidden="true" />
+      </div>
       {task.error && <div className="task-error" title={task.error}>{task.error}</div>}
+      {task.request_error && <div className="task-request-error" role="status">{task.request_error}</div>}
       <div className="task-item-footer">
         <span>{relativeTime(task.created_at)}</span>
         <span>{config.label}</span>
@@ -98,8 +110,8 @@ export default function TaskTable({ tasks, onSelectTask, activeTaskId, onTaskAct
   return (
     <Card className="task-list-card" title="任务列表" bordered>
       <div className="task-filter-bar">
-        <Input value={query} onChange={setQuery} prefix={<IconSearch />} placeholder="搜索文件名" allowClear />
-        <Select value={status} onChange={setStatus} options={[
+        <Input value={query} onChange={setQuery} prefix={<IconSearch />} placeholder="搜索文件名" aria-label="搜索任务文件名" allowClear />
+        <Select value={status} onChange={setStatus} aria-label="筛选任务状态" options={[
           { value: "all", label: "全部状态" },
           ...Object.entries(STATUS_CONFIG).map(([value, option]) => ({ value, label: option.label })),
         ]} />

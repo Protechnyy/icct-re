@@ -1,4 +1,3 @@
-"""Validated edits and document memory; callers never mutate the input snapshot."""
 from collections import Counter
 from copy import deepcopy
 import json
@@ -41,7 +40,7 @@ class RelationWorkspace:
 
     def record(self, kind, task_id, before, after, **extra):
         ids = list(dict.fromkeys(item["relation_id"] for item in [*before, *after]))
-        change = {"type": kind, "task_id": task_id, "relation_ids": ids,
+        change = {"change_id": f"c{len(self.changes) + 1}", "type": kind, "task_id": task_id, "relation_ids": ids,
                   "before": deepcopy(before), "after": deepcopy(after), **deepcopy(extra)}
         self.changes.append(change)
         return {"ok": True, "change": change}
