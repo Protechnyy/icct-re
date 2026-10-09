@@ -95,6 +95,14 @@ button { font: inherit; }
 .result-tab-body { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 16px 18px; }
 .result-tab-body.is-json { overflow: hidden; }
 .result-pending { flex: 1; display: grid; place-items: center; }
+.agent-summary, .agent-progress { width: 100%; margin: 12px 0; }
+.agent-summary .arco-space { gap: 12px; }
+.agent-events { padding-left: 20px; max-height: 280px; overflow-y: auto; }
+.agent-events li { margin: 8px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.agent-events .arco-tag { margin-right: 8px; }
+.agent-change { margin: 12px 0; overflow-wrap: anywhere; }
+.agent-tool { margin: 10px 0; padding: 10px; background: #f7f8fa; }
+.agent-tool p, .agent-change p { white-space: pre-wrap; }
 .result-empty-card { height: 100%; border: 1px solid #e5e6eb; display: grid; place-items: center; box-shadow: 0 2px 6px rgba(31,35,41,.03); }
 .result-empty-card .arco-card-body { padding: 0; }
 .empty-title { color: #1d2129; font-size: 16px; font-weight: 500; margin-bottom: 8px; }

@@ -6,6 +6,7 @@ export const STATUS_CONFIG = {
   queued: { color: "gray", label: "等待中", stage: "等待任务调度" },
   ocr_running: { color: "arcoblue", label: "OCR 处理中", stage: "正在识别文档内容" },
   extracting: { color: "arcoblue", label: "抽取中", stage: "正在抽取文档关系" },
+  verifying: { color: "arcoblue", label: "核查中", stage: "正在核查文档关系" },
   merging: { color: "arcoblue", label: "结果整合", stage: "正在整理抽取结果" },
   succeeded: { color: "green", label: "已完成", stage: "关系抽取完成" },
   failed: { color: "red", label: "失败", stage: "任务处理失败" },
@@ -42,7 +43,7 @@ function TaskListItem({ task, active, onSelect, onAction }) {
     }
   }
   const config = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知", stage: task.stage || "处理中" };
-  const stage = task.stage && task.stage !== task.status ? task.stage : config.stage;
+  const stage = task.stage === "agent_verification" ? "文档级核查" : task.stage && task.stage !== task.status ? task.stage : config.stage;
   return (
     <div className={`task-list-item ${active ? "is-active" : ""}`}>
       <button type="button" className="task-select" title={task.filename} aria-label={`查看任务：${task.filename}`} aria-pressed={active} onClick={() => onSelect(task.task_id)} />
@@ -54,6 +55,10 @@ function TaskListItem({ task, active, onSelect, onAction }) {
         <Tag color={config.color} size="small">{config.label}</Tag>
       </div>
       <div className="task-stage">{stage}</div>
+      {task.stage === "agent_verification" && task.agent_progress && <div className="task-stage">
+        已完成 {task.agent_progress.completed_tasks || 0}/{task.agent_progress.total_tasks || 0}
+        {task.agent_progress.current_task?.reason && <span> · {task.agent_progress.current_task.reason}</span>}
+      </div>}
       <Progress percent={Number(task.progress) || 0} size="small" showText className="task-progress" />
       {task.error && <div className="task-error" title={task.error}>{task.error}</div>}
       <div className="task-item-footer">

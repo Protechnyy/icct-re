@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
 
 from app.config import AppConfig
 from app.pipeline import (
@@ -22,6 +23,52 @@ class FakeTaskStore:
 
     def set_result(self, task_id: str, result):
         self.result = result
+
+
+def test_pipeline_agent_disabled_does_not_call_agent(tmp_path, monkeypatch):
+    def unexpected(*args, **kwargs):
+        raise AssertionError("disabled agent called")
+    monkeypatch.setattr("app.pipeline.verify_document", unexpected)
+    store = FakeTaskStore()
+    pipeline = DocumentPipeline(build_config(tmp_path), store, FakeOcrClient(), FakeRelationExtractor())
+    result = pipeline.process_task("disabled-agent", {"file_path": str(tmp_path / "sample.pdf"), "filename": "sample.pdf", "file_type": 0})
+    assert result["agent_result"] == {"status": "disabled"}
+    assert all("relation_id" not in item and "verification" not in item for item in result["final_relations"])
+    assert all(item["relation_id"] for item in result["pre_agent_relations"])
+    assert not any(update.get("stage") == "agent_verification" for _, update in store.status_updates)
+
+
+def test_pipeline_agent_enabled_uses_output_and_reports_progress(tmp_path, monkeypatch):
+    def fake_agent(relations, sections, text, config, callback):
+        assert all(item["relation_id"] for item in relations)
+        callback({"total_tasks": 2, "completed_tasks": 0, "finished_tasks": 0, "tasks": [], "recent_events": []})
+        callback({"total_tasks": 2, "completed_tasks": 1, "finished_tasks": 1, "current_task": {"id": "t2"}, "recent_events": [{"kind": "tool"}]})
+        callback({"total_tasks": 2, "completed_tasks": 2, "finished_tasks": 2, "current_task": None, "recent_events": []})
+        return [relations[0]], {"status": "completed", "summary": {"deleted_relations": 1}}
+    monkeypatch.setattr("app.pipeline.verify_document", fake_agent)
+    store = FakeTaskStore()
+    pipeline = DocumentPipeline(replace(build_config(tmp_path), agent_enabled=True), store, FakeOcrClient(), FakeRelationExtractor())
+    result = pipeline.process_task("enabled-agent", {"file_path": str(tmp_path / "sample.pdf"), "filename": "sample.pdf", "file_type": 0})
+    assert len(result["final_relations"]) == 1 and len(result["pre_agent_relations"]) == 2
+    assert result["agent_result"]["status"] == "completed"
+    assert result["final_relation_list"]["relation_list"] == result["final_relations"]
+    assert result["ocr_summary"]["relation_count"] == 1
+    progress = [update for _, update in store.status_updates if "agent_progress" in update]
+    assert [u["progress"] for u in progress] == [70, 77, 84]
+    assert progress[1]["agent_progress"]["current_task"]["id"] == "t2"
+    assert store.status_updates[-1][1]["status"] == "succeeded"
+
+
+def test_pipeline_agent_exception_keeps_document_successful(tmp_path, monkeypatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError("agent exploded")
+    monkeypatch.setattr("app.pipeline.verify_document", fail)
+    store = FakeTaskStore()
+    pipeline = DocumentPipeline(replace(build_config(tmp_path), agent_enabled=True), store, FakeOcrClient(), FakeRelationExtractor())
+    result = pipeline.process_task("failed-agent", {"file_path": str(tmp_path / "sample.pdf"), "filename": "sample.pdf", "file_type": 0})
+    assert result["agent_result"]["status"] == "failed"
+    assert result["final_relations"] == result["pre_agent_relations"]
+    assert store.status_updates[-1][1]["status"] == "succeeded"
 
 
 class FakeOcrClient:

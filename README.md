@@ -2,6 +2,8 @@
 
 ICCT-RE 是一个文档级关系抽取工作台。上传 PDF 或图片后，后端依次完成 OCR 版面解析、结构化重排、Skill4RE 技能路由和关系抽取，最终返回 `relation_list` JSON。
 
+可选的文档核查阶段在规则去重之后运行，通过 LangGraph 调用原文检索与关系修改工具；结果包含核查前的 `pre_agent_relations` 和核查轨迹 `agent_result`。
+
 ## 项目结构
 
 - [backend/](backend/)：Flask API、Redis 任务队列、Worker、OCR / LLM 流水线
@@ -15,7 +17,7 @@ ICCT-RE 是一个文档级关系抽取工作台。上传 PDF 或图片后，后�
 
 - Redis（本地）：`redis://localhost:6379/0`
 - OCR 版面解析服务（本地）：PaddleOCR-VL-1.6-0.9B，默认地址为 `http://127.0.0.1:8118/v1`
-- 关系抽取 Qwen OpenAI 兼容服务：远程 API，默认模型为 `Qwen3-32B-AWQ`
+- 关系抽取 Qwen OpenAI 兼容服务：远程 API，默认模型为 `qwen3.8-27b`
 
 ## 环境准备
 
@@ -75,20 +77,22 @@ PADDLE_OCR_SERVER_URL=http://127.0.0.1:8118/v1
 
 ## 关系抽取 Qwen API
 
-默认配置通过远程 OpenAI 兼容 API 调用 `Qwen3-32B-AWQ`。复制 `backend/.env.example` 为 `backend/.env` 后，填写有效的 `VLLM_API_KEY` 即可，无需启动本地 vLLM。
+默认配置通过远程 OpenAI 兼容 API 调用 `qwen3.8-27b`。复制 `backend/.env.example` 为 `backend/.env` 后，填写有效的 `VLLM_API_KEY` 即可，无需启动本地 vLLM。
 
 ```env
-VLLM_BASE_URL=https://api.asukalangely.top/v1/chat/completions
+VLLM_BASE_URL=https://llm-bln22h7lns8wvuub.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
 VLLM_API_KEY=你的_api_key
-VLLM_MODEL=Qwen3-32B-AWQ
+VLLM_MODEL=qwen3.8-27b
 VLLM_MAX_RETRIES=3
 VLLM_RETRY_BACKOFF_SECONDS=2
 SKILL4RE_BACKEND=vllm
-SKILL4RE_MODEL=Qwen3-32B-AWQ
+SKILL4RE_MODEL=qwen3.8-27b
 VLLM_ENABLE_THINKING=false
 ```
 
 `VLLM_BASE_URL` 既可以填写完整的 `/v1/chat/completions` 地址，也可以填写去掉 `/chat/completions` 后的 `/v1` base URL；后端会在请求关系抽取时自动规整。
+
+使用 `SKILL4RE_BACKEND=qwen_api` 时，密钥来自 `DASHSCOPE_API_KEY`，自定义部署地址请设置 `SKILL4RE_BASE_URL`；SDK 和 requests 两条调用路径均遵循这个地址。示例默认使用 `vllm` 适配器调用兼容 API，密钥来自 `VLLM_API_KEY`。切到百炼部署时建议设置 `RELATION_BATCH_CONCURRENCY=4`，遇到限流再调低。
 
 ## 可选：启动本地 vLLM
 
@@ -167,3 +171,60 @@ curl http://127.0.0.1:5000/api/health
 | `GET` | `/api/skills` | 获取 Skill4RE skill 列表 |
 | `POST` | `/api/skills` | 新增 skill |
 | `PUT` | `/api/skills/<name>` | 修改 skill |
+
+## 文档核查 agent
+
+核查默认关闭（`AGENT_ENABLED=false`）。启用时修改 `backend/.env`，填写独立的 `AGENT_API_KEY`，然后重启 worker：
+
+```dotenv
+AGENT_ENABLED=true
+AGENT_BASE_URL=https://llm-bln22h7lns8wvuub.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+AGENT_API_KEY=your_bailian_api_key
+AGENT_MODEL=qwen3.8-27b
+```
+
+核查使用独立密钥配置，不会自动读取抽取阶段的密钥。即使两个阶段使用同一部署，也须分别配置。模型调用显式关闭思考，轨迹仅保存工具参数、结果摘要和任务结论。
+
+| 配置项 | 默认值 | 含义 |
+| --- | --- | --- |
+| `AGENT_ENABLED` | `false` | 是否运行核查 |
+| `AGENT_BASE_URL` | 上述北京百炼地址 | OpenAI 兼容地址，可带 `/chat/completions` 后缀 |
+| `AGENT_API_KEY` | 空 | 独立核查密钥 |
+| `AGENT_MODEL` | `qwen3.8-27b` | 核查模型 |
+| `AGENT_CONCURRENCY` | `1` | 首版串行执行，设大于 1 会收敛为 1 |
+| `AGENT_MAX_TASKS` | `20` | 每篇最多规划的任务数 |
+| `AGENT_MAX_STEPS` | `6` | 单任务 LangGraph 图节点执行上限，包含模型和工具节点 |
+| `AGENT_MAX_LLM_CALLS` | `80` | 每篇模型请求预算，限流重试计入 |
+| `AGENT_TIMEOUT_SECONDS` | `600` | 核查阶段总时限，单位秒 |
+| `AGENT_MAX_ADDED_PER_TASK` | `5` | 单任务补充关系上限 |
+
+核查期间任务状态为 `verifying`，页面显示已完成任务数、当前任务和最近轨迹；结果页显示改动摘要、删除存档及逐关系详情。阶段失败时保留核查前的抽取结果，任务仍可成功；部分完成只保留已生效的合法改动，不能视为整篇已完成核查。关闭时抽取输出行为保持不变。回滚只需设回 `AGENT_ENABLED=false` 并重启 worker。
+
+只重放已保存的结果，无需 OCR、Redis 或前端，输出目录必须与输入目录独立：
+
+```bash
+backend/.venv/bin/python scripts/replay-agent-verification.py \
+  data/results/<task_id>/result.json \
+  --output-dir data/agent_replays/my-run
+```
+
+输出包含 `result.json`、`metrics.json`、`changes.csv` 和多文档 `evaluation.json`。可以用 `--annotations annotations.json` 提供标注；单篇为关系列表，多篇为 task_id 到关系列表的映射。精确率、召回率和 F1 按规范化后的头实体、关系、尾实体严格匹配，关系词同义表达不会自动等同。无标注时明确跳过这些指标。
+
+在 `changes.csv` 的 `judgment` 列填写 `正确` 或 `错误` 后，可以重新计算整体和分类型改动正确率：
+
+```bash
+backend/.venv/bin/python scripts/replay-agent-verification.py \
+  --judgments-csv data/agent_replays/my-run/<task_id>/changes.csv
+```
+
+本次五领域材料与评估可通过以下脚本复现。第二个命令会实际调用本地 OCR 和远程模型，需要先配置有效的抽取及核查密钥；它会复用已有输出，重新运行请选择新输出目录。
+
+```bash
+backend/.venv/bin/python scripts/generate-agent-evaluation-documents.py \
+  --output-dir data/agent_evaluation/my-run/documents
+backend/.venv/bin/python scripts/run-agent-document-evaluation.py \
+  --documents-dir data/agent_evaluation/my-run/documents \
+  --output-dir data/agent_evaluation/my-run
+```
+
+2026-10-09 的五篇合成文档实测核查为 10.8–29.7 秒，中位数 17.7 秒，五篇均部分完成；这不是完整核查的耗时承诺。助手逐条审阅的改动正确率为 5/6（83.33%），发现别名合并产生自指关系，且没有删除样本，未能证明全部开启门槛。建议保持默认关闭。较长的真实项目文档此前用旧模型约 175 秒，也为部分完成；结果不能直接外推到新模型或其他长度文档。详细指标与逐条判定见 [五领域评估报告](openspec/changes/add-document-agent-verification/five-domain-evaluation.md)。

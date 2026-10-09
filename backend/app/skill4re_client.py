@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Protocol
 
-from .config import AppConfig
+from .config import AppConfig, normalize_openai_base_url
 
 LOGGER = logging.getLogger(__name__)
 
@@ -59,6 +59,12 @@ class Skill4ReClient:
         except ImportError:
             LOGGER.info("OpenAI SDK is not installed; skill4re will use requests fallback.")
             self._client, self._local_generator = None, None
+
+        # SDK backends also need the configured deployment URL; otherwise qwen_api
+        # always connects to its library default even when SKILL4RE_BASE_URL is set.
+        if self._client is not None and self._base_url():
+            self._client = self._client.with_options(
+                base_url=normalize_openai_base_url(self._base_url()))
 
         self.extractor = self._extractor_class(
             skills=self.skills,

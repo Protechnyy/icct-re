@@ -7,6 +7,9 @@ from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
+DEFAULT_LLM_MODEL = "qwen3.8-27b"
+DEFAULT_LLM_BASE_URL = "https://llm-bln22h7lns8wvuub.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+
 RELATION_SPLIT_MODES = {"small_section", "chapter", "paragraph", "fixed_sections"}
 DEFAULT_RELATION_SPLIT_MODE = "small_section"
 DEFAULT_RELATION_BATCH_SIZE = 1
@@ -108,6 +111,16 @@ class AppConfig:
     relation_max_batch_tokens: int = DEFAULT_RELATION_MAX_BATCH_TOKENS
     relation_include_parent_title: bool = DEFAULT_RELATION_INCLUDE_PARENT_TITLE
     relation_batch_concurrency: int = DEFAULT_RELATION_BATCH_CONCURRENCY
+    agent_enabled: bool = False
+    agent_base_url: str = DEFAULT_LLM_BASE_URL
+    agent_api_key: str = ""
+    agent_model: str = DEFAULT_LLM_MODEL
+    agent_concurrency: int = 1
+    agent_max_tasks: int = 20
+    agent_max_steps: int = 6
+    agent_max_llm_calls: int = 80
+    agent_timeout_seconds: int = 600
+    agent_max_added_per_task: int = 5
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -116,7 +129,7 @@ class AppConfig:
         repo_root = Path(__file__).resolve().parents[2]
         default_skill4re_skills_dir = repo_root / "skill4re" / "skill4re" / "skills"
         default_skill4re_route_cache = storage_root / "tmp" / "skill4re_route_cache.json"
-        vllm_model = os.getenv("VLLM_MODEL", "Qwen/Qwen3-32B-AWQ")
+        vllm_model = os.getenv("VLLM_MODEL", DEFAULT_LLM_MODEL)
         return cls(
             api_host=os.getenv("API_HOST", "0.0.0.0"),
             api_port=int(os.getenv("API_PORT", "5000")),
@@ -133,7 +146,7 @@ class AppConfig:
             ),
             paddle_ocr_timeout_seconds=int(os.getenv("PADDLE_OCR_TIMEOUT_SECONDS", "180")),
             paddle_ocr_file_mode=os.getenv("PADDLE_OCR_FILE_MODE", "base64"),
-            vllm_base_url=normalize_openai_base_url(os.getenv("VLLM_BASE_URL", "http://127.0.0.1:8000/v1")),
+            vllm_base_url=normalize_openai_base_url(os.getenv("VLLM_BASE_URL", DEFAULT_LLM_BASE_URL)),
             vllm_api_key=os.getenv("VLLM_API_KEY", "EMPTY"),
             vllm_model=vllm_model,
             vllm_timeout_seconds=int(os.getenv("VLLM_TIMEOUT_SECONDS", "180")),
@@ -190,6 +203,17 @@ class AppConfig:
                 os.getenv("RELATION_BATCH_CONCURRENCY"),
                 DEFAULT_RELATION_BATCH_CONCURRENCY,
             ),
+            agent_enabled=_as_bool(os.getenv("AGENT_ENABLED"), False),
+            agent_base_url=normalize_openai_base_url(os.getenv(
+                "AGENT_BASE_URL", DEFAULT_LLM_BASE_URL)),
+            agent_api_key=os.getenv("AGENT_API_KEY", ""),
+            agent_model=os.getenv("AGENT_MODEL", DEFAULT_LLM_MODEL),
+            agent_concurrency=_as_int(os.getenv("AGENT_CONCURRENCY"), 1),
+            agent_max_tasks=_as_int(os.getenv("AGENT_MAX_TASKS"), 20),
+            agent_max_steps=_as_int(os.getenv("AGENT_MAX_STEPS"), 6),
+            agent_max_llm_calls=_as_int(os.getenv("AGENT_MAX_LLM_CALLS"), 80),
+            agent_timeout_seconds=_as_int(os.getenv("AGENT_TIMEOUT_SECONDS"), 600),
+            agent_max_added_per_task=_as_int(os.getenv("AGENT_MAX_ADDED_PER_TASK"), 5),
         )
 
     def ensure_storage_dirs(self) -> None:
@@ -227,4 +251,13 @@ class AppConfig:
             "relation_max_batch_tokens": self.relation_max_batch_tokens,
             "relation_include_parent_title": self.relation_include_parent_title,
             "relation_batch_concurrency": self.relation_batch_concurrency,
+            "agent_enabled": self.agent_enabled,
+            "agent_base_url": self.agent_base_url,
+            "agent_model": self.agent_model,
+            "agent_concurrency": self.agent_concurrency,
+            "agent_max_tasks": self.agent_max_tasks,
+            "agent_max_steps": self.agent_max_steps,
+            "agent_max_llm_calls": self.agent_max_llm_calls,
+            "agent_timeout_seconds": self.agent_timeout_seconds,
+            "agent_max_added_per_task": self.agent_max_added_per_task,
         }

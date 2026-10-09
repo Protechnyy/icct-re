@@ -4,6 +4,8 @@ import csv
 import io
 
 from app.api import CSV_COLUMNS, _relations_to_csv
+from app.api import create_app
+from test_pipeline import build_config
 
 
 def test_relations_to_csv_exports_final_relations_with_sources() -> None:
@@ -56,3 +58,25 @@ def test_relations_to_csv_prevents_spreadsheet_formula_injection() -> None:
     assert row["主体"] == "'=1+1"
     assert row["关系"] == "'+SUM(A1:A2)"
     assert row["客体"] == "'@command"
+
+
+def test_result_and_status_interfaces_return_agent_fields(tmp_path, monkeypatch):
+    config = build_config(tmp_path)
+    agent_result = {"status": "completed", "summary": {"llm_calls": 2}, "trace": [{"kind": "plan"}]}
+    progress = {"total_tasks": 1, "completed_tasks": 0, "current_task": {"id": "t1"}, "recent_events": []}
+    class Store:
+        def get_task(self, task_id):
+            return {"task_id": task_id, "filename": "sample.pdf", "stage": "agent_verification",
+                    "agent_progress": progress, "payload": {"file_path": "private"}}
+        def get_result(self, task_id):
+            return {"agent_result": agent_result, "pre_agent_relations": [], "final_relations": []}
+    monkeypatch.setattr("app.api.AppConfig.from_env", lambda: config)
+    monkeypatch.setattr("app.api.RedisTaskStore", lambda url: Store())
+    client = create_app().test_client()
+    response = client.get("/api/result/task-1")
+    assert response.status_code == 200 and response.json["agent_result"] == agent_result
+    state = client.get("/api/status/task-1")
+    assert state.json["agent_progress"] == progress and "payload" not in state.json
+    exported = client.get("/api/result/task-1/csv")
+    assert exported.status_code == 200
+    assert list(csv.reader(io.StringIO(exported.data.decode("utf-8-sig")))) == [list(CSV_COLUMNS)]

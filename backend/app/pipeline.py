@@ -19,6 +19,8 @@ from .config import (
     AppConfig,
 )
 from .paddle_ocr import PaddleOcrClient
+from .agent import verify_document
+from .agent.relations import assign_relation_ids
 from .skill4re_client import RelationExtractor, Skill4ReClient
 from .types import Chunk
 from .utils import chunk_text_with_page_map, utcnow_iso
@@ -97,6 +99,24 @@ class DocumentPipeline:
             relation_sections,
             relation_split_config,
         )
+        pre_agent_relations = assign_relation_ids(final_relations)
+        agent_result = {"status": "disabled"}
+        if self.config.agent_enabled:
+            self.task_store.update_task(task_id, status="verifying", stage="agent_verification", progress=70)
+            stage_started_at = time.perf_counter()
+            def report_agent_progress(agent_progress):
+                fraction = agent_progress.get("finished_tasks", 0) / max(1, agent_progress.get("total_tasks", 0))
+                self.task_store.update_task(task_id, stage="agent_verification",
+                    progress=min(84, 70 + int(14 * fraction)), agent_progress=agent_progress)
+            try:
+                final_relations, agent_result = verify_document(
+                    pre_agent_relations, relation_sections, document_text, self.config, report_agent_progress)
+            except Exception as exc:
+                final_relations = assign_relation_ids(pre_agent_relations)
+                agent_result = {"status": "failed", "reason": "核查阶段失败：" + type(exc).__name__,
+                                "summary": {}, "tasks": [], "trace": [], "removed_relations": [],
+                                "entity_aliases": {}, "changes": []}
+            timing["agent_verification_seconds"] = round(time.perf_counter() - stage_started_at, 4)
 
         self.task_store.update_task(task_id, status="merging", stage="document_merge", progress=85)
         stage_started_at = time.perf_counter()
@@ -138,6 +158,8 @@ class DocumentPipeline:
             "stage_outputs": stage_outputs,
             "skill4re_result": skill4re_result,
             "final_relations": final_relations,
+            "pre_agent_relations": pre_agent_relations,
+            "agent_result": agent_result,
             "final_relation_list": {"relation_list": final_relations},
         }
         timing["document_merge_seconds"] = round(time.perf_counter() - stage_started_at, 4)
@@ -147,6 +169,8 @@ class DocumentPipeline:
             "document_restructure_seconds": timing["document_restructure_seconds"],
             "relation_extraction_seconds": timing["relation_extraction_seconds"],
             "document_merge_seconds": timing["document_merge_seconds"],
+            **({"agent_verification_seconds": timing["agent_verification_seconds"]}
+               if "agent_verification_seconds" in timing else {}),
         }
         stage_outputs["timing"] = timing
         skill4re_result["timing"] = timing
