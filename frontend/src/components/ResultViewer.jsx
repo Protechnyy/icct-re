@@ -178,6 +178,10 @@ export default function ResultViewer({ task, result, agentEvents, resultError, o
   const [selectedRelation, setSelectedRelation] = useState(null);
   const [entityWidths, setEntityWidths] = useState({});
   const [relationWidths, setRelationWidths] = useState({});
+  const relationRows = useMemo(() => getRelations(result).map((item, index) => ({
+    ...item,
+    resultRowKey: `${task?.task_id}:${index}`,
+  })), [result, task?.task_id]);
   useEffect(() => setSelectedRelation(null), [task?.task_id]);
   if (!task) return <ResultEmptyState />;
   const status = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知" };
@@ -198,7 +202,7 @@ export default function ResultViewer({ task, result, agentEvents, resultError, o
   const tabItems = [
     { key: "preview", title: "文档预览", content: <DocumentPreview result={result} /> },
     { key: "entities", title: `实体 ${entities.length ? `(${entities.length})` : ""}`, content: <ResizableResultTable rowKey="key" columns={entityColumns} widths={entityWidths} onWidthsChange={setEntityWidths} defaultColumnWidth={260} data={entities} pagination={false} noDataElement={<Empty description="暂无实体结果" />} /> },
-    { key: "relations", title: `关系 ${relations.length ? `(${relations.length})` : ""}`, content: <ResizableResultTable rowKey={(item, index) => item.relation_id || item.id || `${index}-${item.relation}`} columns={relationColumns} widths={relationWidths} onWidthsChange={setRelationWidths} data={relations} pagination={false} noDataElement={<Empty description="暂无关系结果" />} /> },
+    { key: "relations", title: `关系 ${relations.length ? `(${relations.length})` : ""}`, content: <ResizableResultTable rowKey="resultRowKey" columns={relationColumns} widths={relationWidths} onWidthsChange={setRelationWidths} data={relationRows} pagination={false} noDataElement={<Empty description="暂无关系结果" />} /> },
     { key: "json", title: "JSON", content: <JsonViewer data={result || { status: task.status }} filename={`${task.filename}.json`} /> },
     { key: "logs", title: "运行日志", content: <ExecutionLog task={task} result={result} /> },
   ];
