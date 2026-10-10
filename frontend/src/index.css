@@ -155,6 +155,16 @@ input, textarea { caret-color: rgb(var(--primary-6)); }
 .result-request-error { flex: none; margin: 0 var(--panel-padding) var(--space-4); }
 .result-tab-body .arco-table-th { background: var(--surface-muted); color: var(--text-secondary); font-weight: 500; }
 .result-tab-body .arco-table-td { padding-top: var(--space-4); padding-bottom: var(--space-4); }
+.resizable-result-table { min-width: 0; }
+.resizable-result-table .arco-table table { min-width: 0; }
+.resizable-result-table .arco-table-th { position: relative; }
+.resizable-result-table .arco-table-th-item { padding-right: var(--space-6); }
+.result-column-resizer { position: absolute; top: 0; right: 0; bottom: 0; width: 16px; z-index: 1; cursor: col-resize; touch-action: none; user-select: none; }
+.result-column-resizer::after { content: ""; position: absolute; top: 25%; bottom: 25%; right: 7px; width: 2px; background: var(--text-muted); border-radius: 1px; }
+.result-column-resizer:hover, .result-column-resizer:focus-visible, .result-column-resizer[data-resizing] { background: rgb(var(--primary-1)); }
+.result-column-resizer:hover::after, .result-column-resizer:focus-visible::after, .result-column-resizer[data-resizing]::after { background: rgb(var(--primary-6)); }
+.result-column-resizer:focus-visible { outline-offset: -2px; }
+.resizable-result-table:has(.result-column-resizer[data-resizing]) { cursor: col-resize; user-select: none; }
 .result-pending { min-height: 320px; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: var(--panel-padding); gap: var(--space-6); }
 .agent-change { margin: var(--space-3) 0; overflow-wrap: anywhere; }
 .agent-tool { margin: var(--space-3) 0; padding: var(--space-3); background: var(--surface-muted); }

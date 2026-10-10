@@ -5,7 +5,6 @@ import Empty from "@arco-design/web-react/es/Empty";
 import Input from "@arco-design/web-react/es/Input";
 import Message from "@arco-design/web-react/es/Message";
 import Space from "@arco-design/web-react/es/Space";
-import Table from "@arco-design/web-react/es/Table";
 import Tabs from "@arco-design/web-react/es/Tabs";
 import Tag from "@arco-design/web-react/es/Tag";
 import Tooltip from "@arco-design/web-react/es/Tooltip";
@@ -16,6 +15,7 @@ import { exportTaskCsv } from "../lib/api";
 import { STATUS_CONFIG } from "./TaskTable";
 import { AgentWorkspace, AgentRelationDetails, VERIFICATION_LABELS, hasAgentResult } from "./AgentVerification";
 import ResultEmptyState from "./ResultEmptyState";
+import ResizableResultTable from "./ResizableResultTable";
 import "@arco-design/web-react/es/Table/style/css.js";
 import "@arco-design/web-react/es/Tabs/style/css.js";
 import "@arco-design/web-react/es/Typography/style/css.js";
@@ -176,6 +176,8 @@ export default function ResultViewer({ task, result, agentEvents, resultError, o
   const [activeTab, setActiveTab] = useState("preview");
   const [exportingCsv, setExportingCsv] = useState(false);
   const [selectedRelation, setSelectedRelation] = useState(null);
+  const [entityWidths, setEntityWidths] = useState({});
+  const [relationWidths, setRelationWidths] = useState({});
   useEffect(() => setSelectedRelation(null), [task?.task_id]);
   if (!task) return <ResultEmptyState />;
   const status = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知" };
@@ -183,20 +185,20 @@ export default function ResultViewer({ task, result, agentEvents, resultError, o
   const entities = getEntities(relations);
   const showAgent = hasAgentResult(result);
   const entityColumns = [
-    { title: "实体名称", dataIndex: "name", ellipsis: true },
-    { title: "来源段落", width: 360, render: (_, item) => <SourceParagraphs paragraphs={item.sourceParagraphs} /> },
+    { key: "name", title: "实体名称", dataIndex: "name", ellipsis: true },
+    { key: "source", title: "来源段落", width: 360, render: (_, item) => <SourceParagraphs paragraphs={item.sourceParagraphs} /> },
   ];
   const relationColumns = [
-    { title: "主体", render: (_, item) => item.subject || item.head || item.head_entity || "-", ellipsis: true },
-    { title: "关系", render: (_, item) => item.relation || "-", width: 150, ellipsis: true },
-    { title: "客体", render: (_, item) => item.object || item.tail || item.tail_entity || "-", ellipsis: true },
-    { title: "来源段落", render: (_, item) => <SourceParagraphs paragraphs={item.source_paragraphs} />, width: 360 },
-    ...(showAgent ? [{ title: "核查状态", width: 130, render: (_, item) => <Button type="text" size="mini" onClick={() => setSelectedRelation(item)}>{VERIFICATION_LABELS[item.verification?.status] || "未核查"}</Button> }] : []),
+    { key: "subject", title: "主体", render: (_, item) => item.subject || item.head || item.head_entity || "-", ellipsis: true },
+    { key: "relation", title: "关系", render: (_, item) => item.relation || "-", width: 150, ellipsis: true },
+    { key: "object", title: "客体", render: (_, item) => item.object || item.tail || item.tail_entity || "-", ellipsis: true },
+    { key: "source", title: "来源段落", render: (_, item) => <SourceParagraphs paragraphs={item.source_paragraphs} />, width: 360 },
+    ...(showAgent ? [{ key: "verification", title: "核查状态", width: 130, render: (_, item) => <Button type="text" size="mini" onClick={() => setSelectedRelation(item)}>{VERIFICATION_LABELS[item.verification?.status] || "未核查"}</Button> }] : []),
   ];
   const tabItems = [
     { key: "preview", title: "文档预览", content: <DocumentPreview result={result} /> },
-    { key: "entities", title: `实体 ${entities.length ? `(${entities.length})` : ""}`, content: <Table rowKey="key" columns={entityColumns} data={entities} pagination={false} scroll={{ x: 620 }} noDataElement={<Empty description="暂无实体结果" />} /> },
-    { key: "relations", title: `关系 ${relations.length ? `(${relations.length})` : ""}`, content: <Table rowKey={(item, index) => item.relation_id || item.id || `${index}-${item.relation}`} columns={relationColumns} data={relations} pagination={false} scroll={{ x: 720 }} noDataElement={<Empty description="暂无关系结果" />} /> },
+    { key: "entities", title: `实体 ${entities.length ? `(${entities.length})` : ""}`, content: <ResizableResultTable rowKey="key" columns={entityColumns} widths={entityWidths} onWidthsChange={setEntityWidths} defaultColumnWidth={260} data={entities} pagination={false} noDataElement={<Empty description="暂无实体结果" />} /> },
+    { key: "relations", title: `关系 ${relations.length ? `(${relations.length})` : ""}`, content: <ResizableResultTable rowKey={(item, index) => item.relation_id || item.id || `${index}-${item.relation}`} columns={relationColumns} widths={relationWidths} onWidthsChange={setRelationWidths} data={relations} pagination={false} noDataElement={<Empty description="暂无关系结果" />} /> },
     { key: "json", title: "JSON", content: <JsonViewer data={result || { status: task.status }} filename={`${task.filename}.json`} /> },
     { key: "logs", title: "运行日志", content: <ExecutionLog task={task} result={result} /> },
   ];
