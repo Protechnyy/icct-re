@@ -10,6 +10,8 @@ export async function uploadFiles(fileList, relationOptions = {}) {
     formData.append("batch_size", String(relationOptions.batch_size));
   }
   formData.append("fast_mode", String(relationOptions.fast_mode === true));
+  formData.append("stream_thinking", String(relationOptions.stream_thinking !== false));
+  formData.append("thinking_budget", String(relationOptions.thinking_budget ?? 0));
   const response = await fetch(`${API_BASE_URL}/upload`, {
     method: "POST",
     body: formData,

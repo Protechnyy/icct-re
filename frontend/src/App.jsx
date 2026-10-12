@@ -35,6 +35,8 @@ export default function App() {
     split_mode: "small_section",
     batch_size: 1,
     fast_mode: false,
+    stream_thinking: true,
+    thinking_budget: 1024,
   });
   const [submitting, setSubmitting] = useState(false);
   const [tasks, setTasks] = useState([]);

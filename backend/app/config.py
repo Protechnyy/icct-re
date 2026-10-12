@@ -121,6 +121,8 @@ class AppConfig:
     agent_max_llm_calls: int = 80
     agent_timeout_seconds: int = 600
     agent_max_added_per_task: int = 5
+    stream_enabled: bool = True
+    stream_thinking: bool = True
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -214,6 +216,8 @@ class AppConfig:
             agent_max_llm_calls=_as_int(os.getenv("AGENT_MAX_LLM_CALLS"), 80),
             agent_timeout_seconds=_as_int(os.getenv("AGENT_TIMEOUT_SECONDS"), 600),
             agent_max_added_per_task=_as_int(os.getenv("AGENT_MAX_ADDED_PER_TASK"), 5),
+            stream_enabled=_as_bool(os.getenv("STREAM_ENABLED"), True),
+            stream_thinking=_as_bool(os.getenv("STREAM_THINKING"), True),
         )
 
     def ensure_storage_dirs(self) -> None:
@@ -260,4 +264,6 @@ class AppConfig:
             "agent_max_llm_calls": self.agent_max_llm_calls,
             "agent_timeout_seconds": self.agent_timeout_seconds,
             "agent_max_added_per_task": self.agent_max_added_per_task,
+            "stream_enabled": self.stream_enabled,
+            "stream_thinking": self.stream_thinking,
         }

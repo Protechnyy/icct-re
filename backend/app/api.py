@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
+import re
 from pathlib import Path
 from urllib.parse import quote
 
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from .config import AppConfig, RELATION_SPLIT_MODES
+from .llm_stream import decode_entry, stream_key
 from .paddle_ocr import PaddleOcrClient
 from .skill_store import SkillStore, SkillStoreError
 from .task_store import RedisTaskStore
@@ -18,6 +22,11 @@ from .utils import detect_file_type, ensure_supported_file_suffix, generate_task
 from .vllm_client import VllmClient
 
 LOGGER = logging.getLogger(__name__)
+STREAM_ENTRY_ID_RE = re.compile(r"^\d+(-\d+)?$")
+
+
+def _sse_event(event_name: str, data: str, seq: str) -> str:
+    return f"event: {event_name}\ndata: {data}\nid: {seq}\n\n"
 
 
 def create_app() -> Flask:
@@ -51,6 +60,17 @@ def create_app() -> Flask:
             if fast_mode_value is not None and fast_mode_value not in {"true", "false"}:
                 raise ValueError("fast_mode must be true or false")
             fast_mode = fast_mode_value == "true" if fast_mode_value is not None else not config.agent_enabled
+            stream_thinking_value = request.form.get("stream_thinking")
+            if stream_thinking_value is not None and stream_thinking_value not in {"true", "false"}:
+                raise ValueError("stream_thinking must be true or false")
+            stream_thinking = stream_thinking_value == "true" if stream_thinking_value is not None else config.stream_thinking
+            thinking_budget_value = request.form.get("thinking_budget")
+            if thinking_budget_value is None or thinking_budget_value == "":
+                thinking_budget = 0
+            else:
+                thinking_budget = int(thinking_budget_value)
+                if thinking_budget < 0 or thinking_budget > 99999:
+                    raise ValueError("thinking_budget must be between 0 and 99999")
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -83,6 +103,8 @@ def create_app() -> Flask:
                 "file_type": file_type,
                 "relation_split_config": relation_split_config,
                 "fast_mode": fast_mode,
+                "stream_thinking": stream_thinking,
+                "thinking_budget": thinking_budget,
             }
             task_store.create_task(status, payload)
             task_store.enqueue_task(task_id)
@@ -132,6 +154,46 @@ def create_app() -> Flask:
         if event is None:
             return jsonify({"error": "执行事件不存在"}), 404
         return jsonify(event), 200
+
+    @app.get("/api/tasks/<task_id>/stream")
+    def task_stream(task_id: str) -> Response | tuple[object, int]:
+        if task_store.get_task(task_id) is None:
+            return jsonify({"error": "Task not found"}), 404
+        # 连接建立前探测 Redis，不可用时以 503 返回，避免进入 SSE 后无法表达错误
+        try:
+            task_store.redis.ping()
+        except RedisConnectionError:
+            return jsonify({"error": "Redis unavailable"}), 503
+        # EventSource 自动重连携带 Last-Event-ID，优先于查询参数
+        after_seq = request.headers.get("Last-Event-ID") or request.args.get("after_seq", "0")
+        after_seq = str(after_seq).strip()
+        if not STREAM_ENTRY_ID_RE.match(after_seq):
+            return jsonify({"error": "after_seq must be a stream entry id"}), 400
+        cursor = after_seq if "-" in after_seq else "0-0"
+
+        def generate(cursor: str):
+            while True:
+                response = task_store.redis.xread(
+                    {stream_key(task_id): cursor}, block=15000, count=200,
+                )
+                if not response:
+                    # 空闲期心跳注释行，维持连接不被代理与浏览器掐断
+                    yield ": ping\n\n"
+                    continue
+                for _, entries in response:
+                    for entry_id, fields in entries:
+                        cursor = entry_id
+                        event = decode_entry(entry_id, fields)
+                        payload = json.dumps(event, ensure_ascii=False)
+                        yield _sse_event("delta", payload, entry_id)
+                        if event["kind"] == "done":
+                            yield _sse_event("end", payload, entry_id)
+                            return
+
+        response = Response(generate(cursor), mimetype="text/event-stream")
+        response.headers["Cache-Control"] = "no-cache"
+        response.headers["X-Accel-Buffering"] = "no"
+        return response
 
     @app.get("/api/result/<task_id>/csv")
     def result_csv(task_id: str) -> Response | tuple[object, int]:

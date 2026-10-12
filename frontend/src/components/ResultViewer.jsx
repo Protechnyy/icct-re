@@ -12,10 +12,12 @@ import Typography from "@arco-design/web-react/es/Typography";
 import { IconCode, IconCopy, IconDownload, IconFile, IconRefresh, IconSearch } from "@arco-design/web-react/icon";
 import { cloneElement, useEffect, useMemo, useState } from "react";
 import { exportTaskCsv } from "../lib/api";
+import useLlmStream from "../lib/useLlmStream";
 import { STATUS_CONFIG } from "./TaskTable";
 import { AgentWorkspace, AgentRelationDetails, VERIFICATION_LABELS, hasAgentResult } from "./AgentVerification";
 import ResultEmptyState from "./ResultEmptyState";
 import ResizableResultTable from "./ResizableResultTable";
+import StreamConsole from "./StreamConsole";
 import "@arco-design/web-react/es/Table/style/css.js";
 import "@arco-design/web-react/es/Tabs/style/css.js";
 import "@arco-design/web-react/es/Typography/style/css.js";
@@ -183,6 +185,7 @@ export default function ResultViewer({ task, result, agentEvents, resultError, o
     resultRowKey: `${task?.task_id}:${index}`,
   })), [result, task?.task_id]);
   useEffect(() => setSelectedRelation(null), [task?.task_id]);
+  const llmStream = useLlmStream(task?.task_id, task?.status);
   if (!task) return <ResultEmptyState />;
   const status = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知" };
   const relations = getRelations(result);
@@ -241,6 +244,7 @@ export default function ResultViewer({ task, result, agentEvents, resultError, o
       <div className="task-summary-main"><div className="summary-file-icon"><IconFile /></div><div className="task-summary-text"><Tooltip content={task.filename}><Typography.Title heading={2} ellipsis={{ showTooltip: true }}>{task.filename}</Typography.Title></Tooltip><div className="task-summary-meta"><Tag color={status.color}>{status.label}</Tag><span>粒度：{splitModeLabel(task.metadata?.split_mode)}</span><span>Skill：自动路由</span><span>创建于 {task.created_at ? new Date(task.created_at).toLocaleString("zh-CN") : "-"}</span></div></div></div>
       <Space className="task-summary-actions" wrap><Tooltip content="当前后端暂未提供重新执行接口"><Button icon={<IconRefresh />} disabled>重新执行</Button></Tooltip><Button icon={<IconDownload />} onClick={() => result && downloadFile(`${task.filename}.json`, result)} disabled={!result}>导出 JSON</Button><Button type="primary" icon={<IconDownload />} loading={exportingCsv} disabled={!result} onClick={handleExportCsv}>导出 CSV</Button></Space>
     </div>
+    <StreamConsole stream={llmStream} />
     <AgentWorkspace task={task} agent={result?.agent_result} stream={agentEvents} />
     {showAgent && <AgentRelationDetails relation={selectedRelation} agent={result.agent_result} onClose={() => setSelectedRelation(null)} />}
     {resultError && <Alert className="result-request-error" type="error" title="读取抽取结果失败" content={resultError} action={<Button onClick={onRetryResult}>重新读取</Button>} />}
