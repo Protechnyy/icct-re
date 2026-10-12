@@ -74,6 +74,28 @@ export async function getHealth() {
   return response.json();
 }
 
+export async function getModelSettings() {
+  const response = await fetch(`${API_BASE_URL}/settings/model`);
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || "读取模型设置失败");
+  }
+  return payload;
+}
+
+export async function updateModelSettings(settings) {
+  const response = await fetch(`${API_BASE_URL}/settings/model`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || "保存模型设置失败");
+  }
+  return payload;
+}
+
 export async function listSkills() {
   const response = await fetch(`${API_BASE_URL}/skills`);
   if (!response.ok) {

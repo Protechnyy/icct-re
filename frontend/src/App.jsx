@@ -19,6 +19,7 @@ import { exportTaskCsv, getHealth, getTaskResult, getTaskStatus, refreshTaskStat
 const terminalStatuses = ["succeeded", "failed", "cancelled"];
 const ResultViewer = lazy(() => import("./components/ResultViewer"));
 const SkillManager = lazy(() => import("./components/SkillManager"));
+const ModelSettings = lazy(() => import("./components/ModelSettings"));
 
 function readWorkspaceTaskIds() {
   const taskIds = JSON.parse(localStorage.getItem("docre-task-ids") || "[]");
@@ -120,6 +121,16 @@ export default function App() {
     [tasks, activeTaskId]
   );
   const agentEvents = useAgentEvents(activeTask, results[activeTaskId]);
+
+  async function refreshHealth() {
+    setHealth({ loading: true, status: "checking" });
+    try {
+      const payload = await getHealth();
+      setHealth({ loading: false, ...payload });
+    } catch {
+      setHealth({ loading: false, status: "degraded" });
+    }
+  }
 
   useEffect(() => {
     setResultError("");
@@ -233,6 +244,7 @@ export default function App() {
         <nav className="header-nav" aria-label="主导航">
           <Button type={view === "tasks" ? "secondary" : "text"} aria-current={view === "tasks" ? "page" : undefined} icon={<IconApps />} onClick={() => setView("tasks")}>任务中心</Button>
           <Button type={view === "skills" ? "secondary" : "text"} aria-current={view === "skills" ? "page" : undefined} icon={<IconRobot />} onClick={() => setView("skills")}>Skills</Button>
+          <Button type={view === "settings" ? "secondary" : "text"} aria-current={view === "settings" ? "page" : undefined} onClick={() => setView("settings")}>模型设置</Button>
         </nav>
         <div className="service-status">
           <Tooltip content={health.status === "ok" ? "Redis、OCR 与推理服务可用" : "服务状态暂不可用"}>
@@ -244,6 +256,8 @@ export default function App() {
       <main className="app-content">
         {view === "skills" ? (
           <Suspense fallback={<div className="page-loading" role="status"><Spin />正在加载 Skills…</div>}><SkillManager /></Suspense>
+        ) : view === "settings" ? (
+          <Suspense fallback={<div className="page-loading" role="status"><Spin />正在加载模型设置…</div>}><ModelSettings onSaved={refreshHealth} /></Suspense>
         ) : (
           <>
             {restoring && <div className="workspace-loading" role="status">正在恢复任务记录…</div>}

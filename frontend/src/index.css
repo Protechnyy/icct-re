@@ -362,3 +362,21 @@ input, textarea { caret-color: rgb(var(--primary-6)); }
   .upload-trigger, .task-list-item { transition: none; }
   .agent-step-icon .arco-icon-spin { animation: none; }
 }
+
+.model-settings-page { max-width: 760px; margin: 0 auto; }
+.model-settings-card { padding: var(--space-6); border: 1px solid var(--line); border-radius: var(--panel-radius); background: var(--surface); }
+.model-settings-header { margin-bottom: var(--space-6); }
+.model-settings-header h1 { margin: 0; color: var(--text-primary); font-size: 22px; line-height: 30px; }
+.model-settings-header p { margin: var(--space-2) 0 0; color: var(--text-secondary); font-size: 14px; line-height: 22px; }
+.model-settings-form { display: grid; gap: var(--space-5); }
+.model-settings-field { display: grid; gap: var(--space-2); }
+.model-settings-field label { color: var(--text-secondary); font-size: 13px; font-weight: 500; }
+.model-settings-field > span { color: var(--text-muted); font-size: 12px; line-height: 18px; }
+.model-settings-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.model-settings-note { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 18px; }
+.model-settings-loading { min-height: 180px; display: flex; align-items: center; justify-content: center; gap: var(--space-3); color: var(--text-secondary); }
+
+@media (max-width: 600px) {
+  .model-settings-card { padding: var(--space-4); }
+  .model-settings-header h1 { font-size: 20px; }
+}
