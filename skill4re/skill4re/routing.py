@@ -12,7 +12,7 @@ except ImportError:
 
 from skill4re.backends import ROUTER_RESPONSE_FORMAT, LocalQwenGenerator, generate_text, generate_text_with_requests
 from skill4re.models import Skill
-from skill4re.parsing import parse_json
+from skill4re.parsing import coerce_router_payload, parse_json
 from skill4re.prompts import build_router_prompt
 
 
@@ -223,7 +223,7 @@ def route_with_llm(
             stream_thinking=stream_thinking,
             thinking_budget=thinking_budget,
         )
-    parsed = parse_json(content)
+    parsed = coerce_router_payload(parse_json(content))
     ordered = []
     primary = parsed.get("primary_skill")
     if primary in valid_skill_names:

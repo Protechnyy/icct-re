@@ -17,7 +17,7 @@ from skill4re.backends import (
 from skill4re.coref import resolve_coreferences
 from skill4re.dataset import approx_token_count, chunk_document
 from skill4re.normalization import merge_chunk_relations, normalize_prediction, split_by_confidence
-from skill4re.parsing import parse_json
+from skill4re.parsing import coerce_relation_payload, parse_json
 from skill4re.prompts import (
     build_extraction_prompt,
     build_proofreading_prompt,
@@ -115,7 +115,7 @@ class SkillRouterExtractor:
                 stream_thinking=effective_stream_thinking,
                 thinking_budget=effective_thinking_budget,
             )
-        return parse_json(content)
+        return coerce_relation_payload(parse_json(content))
 
     def _get_max_tokens(self, task_type: str) -> int:
         """根据任务类型获取 max_tokens 配置。"""
