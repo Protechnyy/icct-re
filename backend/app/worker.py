@@ -4,6 +4,7 @@ import logging
 import time
 
 from .config import AppConfig
+from .llm_stream import publish_done
 from .pipeline import bootstrap_pipeline
 
 LOGGER = logging.getLogger(__name__)
@@ -37,3 +38,4 @@ def run_worker() -> None:
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("Task %s failed: %s", task_id, exc)
             task_store.update_task(task_id, status="failed", stage="failed", progress=100, error=str(exc))
+            publish_done(task_store.redis, task_id, "failed")

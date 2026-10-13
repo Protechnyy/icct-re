@@ -3,7 +3,7 @@ import json
 import logging
 import math
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 try:
     from openai import OpenAI
@@ -12,7 +12,7 @@ except ImportError:
 
 from skill4re.backends import ROUTER_RESPONSE_FORMAT, LocalQwenGenerator, generate_text, generate_text_with_requests
 from skill4re.models import Skill
-from skill4re.parsing import parse_json
+from skill4re.parsing import coerce_router_payload, parse_json
 from skill4re.prompts import build_router_prompt
 
 
@@ -187,6 +187,10 @@ def route_with_llm(
     base_url: Optional[str] = None,
     request_timeout: int = 120,
     enable_thinking: bool = False,
+    on_delta: Optional[Callable[[str, str, str], None]] = None,
+    stream_id: str = "",
+    stream_thinking: bool = False,
+    thinking_budget: int = 0,
 ) -> Dict:
     prompt = build_router_prompt(text[:3000], scores, skills)
     if client is not None or local_generator is not None:
@@ -198,6 +202,10 @@ def route_with_llm(
             model=model,
             max_tokens=160 if backend == "local_qwen3" else 500,
             response_format=ROUTER_RESPONSE_FORMAT,
+            on_delta=on_delta,
+            stream_id=stream_id,
+            stream_thinking=stream_thinking,
+            thinking_budget=thinking_budget,
         )
     else:
         content = generate_text_with_requests(
@@ -210,8 +218,12 @@ def route_with_llm(
             base_url=base_url,
             timeout=request_timeout,
             enable_thinking=enable_thinking,
+            on_delta=on_delta,
+            stream_id=stream_id,
+            stream_thinking=stream_thinking,
+            thinking_budget=thinking_budget,
         )
-    parsed = parse_json(content)
+    parsed = coerce_router_payload(parse_json(content))
     ordered = []
     primary = parsed.get("primary_skill")
     if primary in valid_skill_names:
@@ -243,6 +255,10 @@ def route_document(
     base_url: Optional[str] = None,
     request_timeout: int = 120,
     enable_thinking: bool = False,
+    on_delta: Optional[Callable[[str, str, str], None]] = None,
+    stream_id: str = "",
+    stream_thinking: bool = False,
+    thinking_budget: int = 0,
 ) -> Dict:
     scores = keyword_scores(text, skills)
     cache_key = doc_hash(text)
@@ -282,6 +298,10 @@ def route_document(
                 base_url=base_url,
                 request_timeout=request_timeout,
                 enable_thinking=enable_thinking,
+                on_delta=on_delta,
+                stream_id=stream_id,
+                stream_thinking=stream_thinking,
+                thinking_budget=thinking_budget,
             )
             router_reason = llm_route["router_reason"]
             selected = llm_route["selected"]

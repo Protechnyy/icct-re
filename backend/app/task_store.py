@@ -5,6 +5,7 @@ from typing import Any
 
 from redis import Redis
 
+from .llm_stream import stream_key
 from .types import TaskStatus
 from .utils import utcnow_iso
 from .agent.trace import event_preview
@@ -64,6 +65,15 @@ class RedisTaskStore:
 
     def _agent_key(self, task_id: str, part: str) -> str:
         return f"docre:agent:{task_id}:{part}"
+
+    def reset_task_runtime(self, task_id: str) -> None:
+        # 重跑任务前清空上一次执行留下的过程数据（校验事件与流式中继）
+        self.redis.delete(
+            self._agent_key(task_id, "events"),
+            self._agent_key(task_id, "details"),
+            self._agent_key(task_id, "meta"),
+            stream_key(task_id),
+        )
 
     def append_agent_event(self, task_id: str, event: dict[str, Any]) -> None:
         if event["document_task_id"] != task_id:

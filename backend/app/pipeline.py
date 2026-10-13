@@ -19,6 +19,7 @@ from .config import (
     RELATION_SPLIT_MODES,
     AppConfig,
 )
+from .llm_stream import publish_delta, publish_done, publish_stage
 from .paddle_ocr import PaddleOcrClient
 from .agent import verify_document
 from .agent.relations import assign_relation_ids
@@ -66,7 +67,14 @@ class DocumentPipeline:
         fast_mode = payload.get("fast_mode", not self.config.agent_enabled)
         if not isinstance(fast_mode, bool):
             raise ValueError("fast_mode must be a boolean")
+        stream_thinking = payload.get("stream_thinking", self.config.stream_thinking)
+        if not isinstance(stream_thinking, bool):
+            raise ValueError("stream_thinking must be a boolean")
+        thinking_budget = payload.get("thinking_budget", 0)
+        if not isinstance(thinking_budget, int) or thinking_budget < 0:
+            raise ValueError("thinking_budget must be a non-negative integer")
         agent_config = replace(self.config, agent_enabled=not fast_mode)
+        self.task_store.reset_task_runtime(task_id)
 
         self.task_store.update_task(task_id, status="ocr_running", stage="layout_parsing", progress=10, error=None)
         stage_started_at = time.perf_counter()
@@ -101,9 +109,12 @@ class DocumentPipeline:
 
         self.task_store.update_task(task_id, status="extracting", stage="relation_extraction", progress=55)
         skill4re_result, stage_outputs, final_relations, relation_batches = self._extract_relations(
+            task_id,
             document_text,
             relation_sections,
             relation_split_config,
+            stream_thinking=stream_thinking,
+            thinking_budget=thinking_budget,
         )
         pre_agent_relations = assign_relation_ids(final_relations)
         agent_result = {"status": "disabled"}
@@ -116,8 +127,8 @@ class DocumentPipeline:
                     progress=min(84, 70 + int(14 * fraction)), agent_progress=agent_progress)
             trace = Trace(report_agent_progress, document_task_id=task_id,
                           event_callback=lambda event: self.task_store.append_agent_event(task_id, event))
-            trace.emit("phase_start", summary="智能体校验已开始")
             try:
+                trace.emit("phase_start", summary="智能体校验已开始")
                 final_relations, agent_result = verify_document(
                     pre_agent_relations, relation_sections, document_text, agent_config, report_agent_progress, trace=trace)
             except Exception as exc:
@@ -191,13 +202,17 @@ class DocumentPipeline:
         _save_result_files(result_dir, result)
         self.task_store.set_result(task_id, result)
         self.task_store.update_task(task_id, status="succeeded", stage="completed", progress=100, error=None)
+        publish_done(self.task_store.redis, task_id, "succeeded")
         return result
 
     def _extract_relations(
         self,
+        task_id: str,
         document_text: str,
         relation_sections: list[dict[str, Any]],
         relation_split_config: dict[str, Any],
+        stream_thinking: bool = True,
+        thinking_budget: int = 0,
     ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
         relation_batches = _build_relation_batches(relation_sections, relation_split_config)
         if not relation_batches:
@@ -207,9 +222,27 @@ class DocumentPipeline:
         all_relations: list[dict[str, Any]] = []
         batch_concurrency = max(1, min(self.config.relation_batch_concurrency, len(relation_batches)))
         batch_extraction_started_at = time.perf_counter()
+        redis = self.task_store.redis
+
+        def on_delta(stream_id: str, kind: str, text: str) -> None:
+            publish_delta(redis, task_id, stream_id, kind, text)
+
+        # delta 回调仅在 STREAM_ENABLED 时注入；关闭时调用退回非流式一次性模式
+        batch_on_delta: Any = on_delta if self.config.stream_enabled else None
+        publish_stage(redis, task_id, {
+            "phase": "extraction_started",
+            "concurrency": batch_concurrency,
+            "batch_count": len(relation_batches),
+        })
 
         def extract_batch(batch: dict[str, Any]) -> dict[str, Any]:
-            batch_result = _order_relation_payload(self.relation_extractor.extract_document(batch["text"]))
+            batch_result = _order_relation_payload(self.relation_extractor.extract_document(
+                batch["text"],
+                on_delta=batch_on_delta,
+                stream_prefix=f"batch-{batch['batch_index']}",
+                stream_thinking=stream_thinking,
+                thinking_budget=thinking_budget,
+            ))
             prediction = batch_result.get("prediction", {})
             relation_list = prediction.get("relation_list", []) if isinstance(prediction, dict) else []
             batch_relations = [
@@ -242,6 +275,10 @@ class DocumentPipeline:
             all_relations.extend(batch_result["relations"])
 
         final_relations = _dedupe_relations(all_relations)
+        publish_stage(redis, task_id, {
+            "phase": "extraction_finished",
+            "relation_count": len(final_relations),
+        })
         skill4re_result = _combine_batch_skill4re_results(
             batch_results,
             final_relations,

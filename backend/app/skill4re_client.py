@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Optional, Protocol
 
 from .config import AppConfig, normalize_openai_base_url
 
@@ -12,7 +12,14 @@ LOGGER = logging.getLogger(__name__)
 
 
 class RelationExtractor(Protocol):
-    def extract_document(self, document_text: str) -> dict[str, Any]:
+    def extract_document(
+        self,
+        document_text: str,
+        on_delta: Optional[Callable[[str, str, str], None]] = ...,
+        stream_prefix: str = ...,
+        stream_thinking: Optional[bool] = ...,
+        thinking_budget: Optional[int] = ...,
+    ) -> dict[str, Any]:
         ...
 
 
@@ -77,12 +84,20 @@ class Skill4ReClient:
             base_url=self._base_url(),
             request_timeout=self.config.vllm_timeout_seconds,
             enable_thinking=self.config.vllm_enable_thinking,
+            stream_thinking=self.config.stream_thinking,
             fast_mode=self.config.skill4re_fast_mode,
             skip_coref=self.config.skill4re_skip_coref,
         )
         self._skills_fingerprint = self._fingerprint_skills()
 
-    def extract_document(self, document_text: str) -> dict[str, Any]:
+    def extract_document(
+        self,
+        document_text: str,
+        on_delta: Optional[Callable[[str, str, str], None]] = None,
+        stream_prefix: str = "",
+        stream_thinking: Optional[bool] = None,
+        thinking_budget: Optional[int] = None,
+    ) -> dict[str, Any]:
         self._reload_if_changed()
         if not document_text.strip():
             return {
@@ -138,6 +153,10 @@ class Skill4ReClient:
             chunk_trigger=self.config.skill4re_chunk_trigger,
             chunk_budget=self.config.skill4re_chunk_budget,
             max_workers=self.config.skill4re_max_workers,
+            on_delta=on_delta,
+            stream_prefix=stream_prefix,
+            stream_thinking=stream_thinking,
+            thinking_budget=thinking_budget,
         )
         self.config.skill4re_route_cache_path.parent.mkdir(parents=True, exist_ok=True)
         self._save_route_cache(self.config.skill4re_route_cache_path, self.route_cache)

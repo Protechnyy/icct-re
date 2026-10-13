@@ -2,11 +2,20 @@ import Button from "@arco-design/web-react/es/Button";
 import Card from "@arco-design/web-react/es/Card";
 import InputNumber from "@arco-design/web-react/es/InputNumber";
 import Radio from "@arco-design/web-react/es/Radio";
+import Slider from "@arco-design/web-react/es/Slider";
 import Upload from "@arco-design/web-react/es/Upload";
 import { IconDelete, IconFile, IconFileImage, IconFilePdf, IconThunderbolt, IconUpload } from "@arco-design/web-react/icon";
 import "@arco-design/web-react/es/InputNumber/style/css.js";
 import "@arco-design/web-react/es/Radio/style/css.js";
+import "@arco-design/web-react/es/Slider/style/css.js";
 import "@arco-design/web-react/es/Upload/style/css.js";
+
+// 思考强度滑杆档位：档位值对应 thinking_budget，0 档 budget=0 表示不限制模型思考长度
+const THINKING_BUDGET_OPTIONS = [
+  { label: "低", budget: 1024 },
+  { label: "中", budget: 4096 },
+  { label: "高", budget: 0 },
+];
 
 function formatSize(bytes) {
   if (bytes === undefined || bytes === null) return "-";
@@ -25,6 +34,10 @@ function fileIcon(file) {
 export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, submitting, relationOptions, onRelationOptionsChange }) {
   const splitMode = relationOptions?.split_mode || "small_section";
   const batchSize = relationOptions?.batch_size || 1;
+  const streamThinking = relationOptions?.stream_thinking !== false;
+  const thinkingBudget = relationOptions?.thinking_budget ?? 1024;
+  const budgetIndex = Math.max(0, THINKING_BUDGET_OPTIONS.findIndex((option) => option.budget === thinkingBudget));
+  const budgetLabel = THINKING_BUDGET_OPTIONS[budgetIndex].label;
   const updateOptions = (next) => onRelationOptionsChange({ ...relationOptions, ...next });
 
   return (
@@ -75,6 +88,33 @@ export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, su
             <InputNumber id="fixed-section-count" min={1} max={Number.MAX_SAFE_INTEGER} precision={0} value={batchSize} onChange={(value) => updateOptions({ batch_size: value || 1 })} suffix="小节" />
           </div>
         )}
+      </div>
+      <div className="task-config thinking-config-row">
+        <div className="thinking-field">
+          <div className="field-label thinking-label-row"><span>思考强度</span><span className="thinking-budget-value">{budgetLabel}</span></div>
+          <Slider
+            className="thinking-budget-slider"
+            min={0}
+            max={THINKING_BUDGET_OPTIONS.length - 1}
+            step={1}
+            value={budgetIndex}
+            formatTooltip={(value) => THINKING_BUDGET_OPTIONS[value]?.label ?? value}
+            onChange={(value) => updateOptions({ thinking_budget: THINKING_BUDGET_OPTIONS[value].budget })}
+            aria-label="思考强度"
+          />
+        </div>
+        <div className="thinking-field">
+          <div className="field-label">思考过程</div>
+          <Radio.Group
+            type="button"
+            value={streamThinking ? "on" : "off"}
+            onChange={(value) => updateOptions({ stream_thinking: value === "on" })}
+            aria-label="输出思考过程"
+          >
+            <Radio value="on">开启</Radio>
+            <Radio value="off">关闭</Radio>
+          </Radio.Group>
+        </div>
       </div>
       <div className="extraction-actions">
         <Button className="submit-task-button" type="primary" icon={<IconUpload />} loading={submitting} disabled={!fileList.length} onClick={onSubmit}>开始抽取</Button>

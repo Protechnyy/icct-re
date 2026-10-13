@@ -2,7 +2,7 @@ import json
 import os
 import re
 import time
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 try:
     from openai import OpenAI
@@ -223,24 +223,77 @@ def generate_text(
     model: str,
     max_tokens: int,
     response_format: Optional[Dict] = None,
+    on_delta: Optional[Callable[[str, str, str], None]] = None,
+    stream_id: str = "",
+    stream_thinking: bool = False,
+    thinking_budget: int = 0,
 ) -> str:
     if backend in {"openai", "api", "qwen_api"}:
         assert api_client is not None
+        stream_requested = on_delta is not None and bool(stream_id)
         request_kwargs = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.0 if max_tokens <= 600 else 0.1,
             "max_tokens": max_tokens,
-            "stream": False,
+            "stream": stream_requested,
         }
         if backend == "qwen_api":
-            request_kwargs["extra_body"] = {"enable_thinking": False}
+            # DashScope 兼容模式：流式时由 STREAM_THINKING 控制，非流式保持关闭
+            extra_body = {"enable_thinking": stream_thinking if stream_requested else False}
+            if stream_requested and thinking_budget > 0:
+                extra_body["thinking_budget"] = thinking_budget
+            request_kwargs["extra_body"] = extra_body
         if response_format is not None and backend in {"openai", "qwen_api"}:
             request_kwargs["response_format"] = response_format
+        if stream_requested:
+            content_parts: List[str] = []
+            stream = api_client.chat.completions.create(**request_kwargs)
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    on_delta(stream_id, "think", reasoning)
+                piece = getattr(delta, "content", None)
+                if piece:
+                    on_delta(stream_id, "answer", piece)
+                    content_parts.append(piece)
+            return "".join(content_parts)
         response = api_client.chat.completions.create(**request_kwargs)
         return response.choices[0].message.content
     assert local_generator is not None
     return local_generator.generate(prompt, max_new_tokens=max_tokens)
+
+
+def _consume_requests_stream(response, on_delta: Callable[[str, str, str], None], stream_id: str) -> str:
+    # 消费 OpenAI 兼容 SSE 流：reasoning_content 归 think，content 归 answer，返回累积全文
+    content_parts: List[str] = []
+    for raw_line in response.iter_lines(decode_unicode=True):
+        if not raw_line:
+            continue
+        line = raw_line.strip()
+        if not line.startswith("data:"):
+            continue  # SSE 注释行（如 ": ping"）直接跳过
+        payload = line[len("data:"):].strip()
+        if payload == "[DONE]":
+            break
+        if not payload:
+            continue
+        chunk = json.loads(payload)
+        choices = chunk.get("choices") or []
+        if not choices:
+            continue
+        delta = choices[0].get("delta") or {}
+        reasoning = delta.get("reasoning_content")
+        if reasoning:
+            on_delta(stream_id, "think", reasoning)
+        piece = delta.get("content")
+        if piece:
+            on_delta(stream_id, "answer", piece)
+            content_parts.append(piece)
+    return "".join(content_parts)
 
 
 def generate_text_with_requests(
@@ -253,8 +306,14 @@ def generate_text_with_requests(
     base_url: Optional[str] = None,
     timeout: int = 120,
     enable_thinking: bool = False,
+    on_delta: Optional[Callable[[str, str, str], None]] = None,
+    stream_id: str = "",
+    stream_thinking: bool = False,
+    thinking_budget: int = 0,
 ) -> str:
     import requests
+
+    stream_requested = on_delta is not None and bool(stream_id)
 
     if base_url:
         resolved_base_url = normalize_openai_base_url(base_url)
@@ -278,12 +337,22 @@ def generate_text_with_requests(
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0 if max_tokens <= 600 else 0.1,
         "max_tokens": max_tokens,
-        "stream": False,
+        "stream": stream_requested,
     }
-    if backend == "qwen_api":
-        data["enable_thinking"] = False
-    if backend == "vllm":
-        data["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
+    if stream_requested:
+        # 流式：qwen_api 与 vllm 都发顶层 enable_thinking，vllm 同时保留 chat_template_kwargs
+        if backend in {"qwen_api", "vllm"}:
+            data["enable_thinking"] = stream_thinking
+        if backend == "vllm":
+            data["chat_template_kwargs"] = {"enable_thinking": stream_thinking}
+        # 思考强度：0 表示不限制，仅在流式且开启思考时下发
+        if stream_thinking and thinking_budget > 0:
+            data["thinking_budget"] = thinking_budget
+    else:
+        if backend == "qwen_api":
+            data["enable_thinking"] = False
+        if backend == "vllm":
+            data["chat_template_kwargs"] = {"enable_thinking": enable_thinking}
     if response_format is not None and backend in {"openai", "qwen_api"}:
         data["response_format"] = response_format
 
@@ -293,7 +362,6 @@ def generate_text_with_requests(
         _env_float("SKILL4RE_API_RETRY_BACKOFF_SECONDS", 2.0),
     )
     url = f"{resolved_base_url}/chat/completions"
-    last_exception = None
     for attempt in range(1, max_retries + 1):
         try:
             response = requests.post(
@@ -301,23 +369,24 @@ def generate_text_with_requests(
                 headers=headers,
                 json=data,
                 timeout=timeout,
+                stream=stream_requested,
             )
-        except requests.RequestException as exc:
-            last_exception = exc
+        except requests.RequestException:
             if attempt >= max_retries:
                 raise
             time.sleep(retry_backoff_seconds * attempt)
             continue
 
-        if response.ok:
-            break
-        if response.status_code not in RETRYABLE_HTTP_STATUS_CODES or attempt >= max_retries:
-            _raise_api_status_error(response)
-        time.sleep(_retry_delay_seconds(response, attempt, retry_backoff_seconds))
-    else:
-        if last_exception is not None:
-            raise last_exception
-        raise RuntimeError(f"API request failed for url: {url}")
+        if not response.ok:
+            if response.status_code not in RETRYABLE_HTTP_STATUS_CODES or attempt >= max_retries:
+                _raise_api_status_error(response)
+            time.sleep(_retry_delay_seconds(response, attempt, retry_backoff_seconds))
+            continue
 
-    result = response.json()
-    return result["choices"][0]["message"]["content"]
+        # 重试时使用带 attempt 标记的 stream_id，避免与中断前已上报的 delta 混淆
+        effective_stream_id = stream_id if attempt == 1 else f"{stream_id}#retry{attempt}"
+        if stream_requested:
+            return _consume_requests_stream(response, on_delta, effective_stream_id)
+        result = response.json()
+        return result["choices"][0]["message"]["content"]
+    raise RuntimeError(f"API request failed for url: {url}")
