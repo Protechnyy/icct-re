@@ -12,9 +12,9 @@ import "@arco-design/web-react/es/Upload/style/css.js";
 
 // 思考强度滑杆档位：档位值对应 thinking_budget，0 档 budget=0 表示不限制模型思考长度
 const THINKING_BUDGET_OPTIONS = [
-  { label: "简洁", budget: 1024 },
-  { label: "适中", budget: 4096 },
-  { label: "充分", budget: 0 },
+  { label: "低", budget: 1024 },
+  { label: "中", budget: 4096 },
+  { label: "高", budget: 0 },
 ];
 
 function formatSize(bytes) {

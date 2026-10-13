@@ -7,6 +7,32 @@ import { memo, useEffect, useRef, useState } from "react";
 // 滚动容器距底部小于该值视为接近底部，保持自动跟随
 const FOLLOW_THRESHOLD = 60;
 
+// 已知技能的中文显示名，未收录的技能名保留原样
+const SKILL_LABELS = {
+  military: "军事",
+  finance: "财务",
+  legal: "法律",
+  medical: "医疗",
+  technology: "科技",
+};
+
+// stream_id 形如 batch-87-chunk0-legal、batch-86-routing、batch-0-proofread，可带 #retryN 后缀
+function formatStreamId(id) {
+  const [mainId, retryTag] = id.split("#");
+  const retryText = retryTag ? `（重试 ${retryTag.replace("retry", "")}）` : "";
+  const match = mainId.match(/^batch-(\d+)-(.+)$/);
+  if (!match) return id;
+  const batchNo = Number(match[1]) + 1;
+  const tail = match[2];
+  const stageLabels = { routing: "技能路由", proofread: "结果校验", summarize: "结果汇总", "targeted-proofread": "定向校验" };
+  if (stageLabels[tail]) return `第 ${batchNo} 批 · ${stageLabels[tail]}${retryText}`;
+  const chunkMatch = tail.match(/^chunk(\d+)-(.+)$/);
+  if (!chunkMatch) return id;
+  const skillLabel = SKILL_LABELS[chunkMatch[2]] || chunkMatch[2];
+  const chunkText = chunkMatch[1] === "0" ? "抽取" : `抽取第 ${Number(chunkMatch[1]) + 1} 段`;
+  return `第 ${batchNo} 批 · ${chunkText}（${skillLabel}）${retryText}`;
+}
+
 function streamStatus(stream, active) {
   if (active) return { label: stream.lastKind === "answer" ? "回答中" : "思考中", color: "arcoblue" };
   return { label: "已结束", color: "gray" };
@@ -44,7 +70,7 @@ const StreamSection = memo(function StreamSection({ stream, active, thinkLen, an
   const status = streamStatus(stream, active);
   return <div className="llm-stream-section">
     <button type="button" className="llm-stream-section-head" onClick={() => setOpen((current) => !current)}>
-      <span className="llm-stream-id">{stream.id}</span>
+      <span className="llm-stream-id">{formatStreamId(stream.id)}</span>
       <Tag size="small" color={status.color}>{status.label}</Tag>
       <span className="llm-stream-section-toggle">{open ? "收起" : "展开"}</span>
     </button>
