@@ -244,13 +244,20 @@ export default function App() {
         <nav className="header-nav" aria-label="主导航">
           <Button type={view === "tasks" ? "secondary" : "text"} aria-current={view === "tasks" ? "page" : undefined} icon={<IconApps />} onClick={() => setView("tasks")}>任务中心</Button>
           <Button type={view === "skills" ? "secondary" : "text"} aria-current={view === "skills" ? "page" : undefined} icon={<IconRobot />} onClick={() => setView("skills")}>Skills</Button>
-          <Button type={view === "settings" ? "secondary" : "text"} aria-current={view === "settings" ? "page" : undefined} onClick={() => setView("settings")}>模型设置</Button>
         </nav>
         <div className="service-status">
           <Tooltip content={health.status === "ok" ? "Redis、OCR 与推理服务可用" : "服务状态暂不可用"}>
             <Badge status={healthColor} text={healthText} />
           </Tooltip>
-          <span className="model-name">Qwen / vLLM</span>
+          <Tooltip content="设置模型 API 地址和 Key">
+            <button
+              type="button"
+              className="model-name"
+              aria-label="模型设置：API 地址和 Key"
+              aria-current={view === "settings" ? "page" : undefined}
+              onClick={() => setView("settings")}
+            >Qwen / vLLM</button>
+          </Tooltip>
         </div>
       </header>
       <main className="app-content">

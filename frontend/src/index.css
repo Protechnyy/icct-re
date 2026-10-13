@@ -57,7 +57,8 @@ input, textarea { caret-color: rgb(var(--primary-6)); }
 .header-nav .arco-btn-secondary { color: rgb(var(--primary-6)); background: rgb(var(--primary-1)); font-weight: 600; }
 .header-menu { padding: var(--space-1); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
 .service-status { display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
-.model-name { padding-left: var(--space-3); border-left: 1px solid var(--line); color: var(--text-muted); }
+.model-name { min-height: 32px; padding: 0 0 0 var(--space-3); border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--text-muted); cursor: pointer; }
+.model-name:hover, .model-name[aria-current="page"] { color: rgb(var(--primary-6)); }
 
 .app-content { padding: var(--space-6) var(--page-gutter) var(--space-8); }
 .page-loading, .result-loading { min-height: 240px; display: flex; align-items: center; justify-content: center; gap: var(--space-3); color: var(--text-secondary); }
@@ -316,11 +317,12 @@ input, textarea { caret-color: rgb(var(--primary-6)); }
   .task-summary-actions { margin-left: 52px; }
 }
 @media (max-width: 960px) {
+  .app-header { flex-wrap: wrap; gap: var(--space-4); }
+  .service-status { margin-left: auto; }
   .workbench-grid { grid-template-columns: 1fr; }
   .workbench-sidebar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
   .task-summary-main { flex-basis: 320px; }
   .task-summary-actions { margin-left: 0; }
-  .service-status .model-name { display: none; }
 }
 @media (max-width: 640px) {
   :root { --page-gutter: var(--space-4); --panel-padding: var(--space-4); }
@@ -333,6 +335,7 @@ input, textarea { caret-color: rgb(var(--primary-6)); }
   .brand-title { font-size: 16px; }
   .brand-subtitle { font-size: 11px; }
   .service-status { order: 1; }
+  .model-name { min-height: 44px; }
   .header-nav { order: 2; flex-basis: 100%; padding-top: var(--space-3); border-top: 1px solid var(--line); }
   .header-nav .arco-btn { flex: 1; }
   .app-content { padding-top: var(--space-5); }
