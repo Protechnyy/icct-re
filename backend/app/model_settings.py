@@ -21,6 +21,8 @@ class ModelSettingsError(ValueError):
 class ModelSettings:
     base_url: str
     api_key: str
+    model: str = ""
+    default_model: str = ""
 
     @property
     def api_key_configured(self) -> bool:
@@ -31,9 +33,19 @@ class ModelSettingsStore:
     def __init__(self, storage_root: Path) -> None:
         self.path = storage_root / "settings" / "model.json"
 
-    def get(self, default_base_url: str, default_api_key: str) -> ModelSettings:
+    def get(
+        self,
+        default_base_url: str,
+        default_api_key: str,
+        default_model: str = "",
+    ) -> ModelSettings:
         if not self.path.exists():
-            return ModelSettings(normalize_openai_base_url(default_base_url), default_api_key)
+            return ModelSettings(
+                normalize_openai_base_url(default_base_url),
+                default_api_key,
+                default_model,
+                default_model,
+            )
 
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
@@ -45,10 +57,38 @@ class ModelSettingsStore:
         api_key = payload.get("api_key")
         if not isinstance(base_url, str) or not isinstance(api_key, str):
             raise ModelSettingsError("模型设置文件缺少有效的 API 地址或 Key")
-        return ModelSettings(_validated_base_url(base_url), api_key)
+        model_value = payload.get("model")
+        if model_value is not None and not isinstance(model_value, str):
+            raise ModelSettingsError("模型设置文件中的模型名称无效")
+        model_override = model_value.strip() if isinstance(model_value, str) else ""
+        effective_model = (
+            model_override
+            if model_override and model_override != default_model.strip()
+            else default_model
+        )
+        return ModelSettings(
+            _validated_base_url(base_url),
+            api_key,
+            effective_model,
+            default_model,
+        )
 
-    def save(self, base_url: str, api_key: str) -> ModelSettings:
-        settings = ModelSettings(_validated_base_url(base_url), api_key.strip())
+    def save(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str = "",
+        default_model: str = "",
+    ) -> ModelSettings:
+        model_override = model.strip()
+        if model_override == default_model.strip():
+            model_override = ""
+        settings = ModelSettings(
+            _validated_base_url(base_url),
+            api_key.strip(),
+            model_override or default_model,
+            default_model,
+        )
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.path.parent, 0o700)
         file_descriptor, temporary_name = tempfile.mkstemp(
@@ -58,7 +98,10 @@ class ModelSettingsStore:
         try:
             os.fchmod(file_descriptor, 0o600)
             with os.fdopen(file_descriptor, "w", encoding="utf-8") as output:
-                json.dump({"base_url": settings.base_url, "api_key": settings.api_key}, output)
+                payload = {"base_url": settings.base_url, "api_key": settings.api_key}
+                if model_override:
+                    payload["model"] = model_override
+                json.dump(payload, output)
                 output.write("\n")
                 output.flush()
                 os.fsync(output.fileno())
@@ -76,24 +119,28 @@ class ModelSettingsStore:
         return stat.st_mtime_ns, stat.st_size, stat.st_ino
 
 
-def main_model_settings_defaults(config: Any) -> tuple[str, str] | None:
+def main_model_settings_defaults(config: Any) -> tuple[str, str, str] | None:
     backend = getattr(config, "skill4re_backend", "vllm")
+    default_model = getattr(config, "skill4re_model", getattr(config, "vllm_model", ""))
     if backend == "vllm":
-        return config.vllm_base_url, config.vllm_api_key
+        return config.vllm_base_url, config.vllm_api_key, default_model
     if backend == "qwen_api":
         return (
             os.getenv("SKILL4RE_BASE_URL") or DEFAULT_QWEN_API_BASE_URL,
             os.getenv("DASHSCOPE_API_KEY", ""),
+            default_model,
         )
     if backend == "openai":
         return (
             os.getenv("SKILL4RE_BASE_URL") or "https://api.openai.com/v1",
             os.getenv("OPENAI_API_KEY", ""),
+            default_model,
         )
     if backend == "api":
         return (
             os.getenv("SKILL4RE_BASE_URL") or "https://api.deepseek.com",
             os.getenv("DEEPSEEK_API_KEY", ""),
+            default_model,
         )
     return None
 

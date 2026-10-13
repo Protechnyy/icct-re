@@ -240,7 +240,8 @@ def create_app() -> Flask:
             return jsonify({"error": str(exc)}), 500
         return jsonify({
             "base_url": settings.base_url,
-            "model": config.skill4re_model,
+            "model": settings.model,
+            "default_model": settings.default_model,
             "backend": config.skill4re_backend,
             "api_key_configured": settings.api_key_configured,
         }), 200
@@ -267,12 +268,25 @@ def create_app() -> Flask:
                 api_key = api_key_value.strip() or current.api_key
             else:
                 api_key = current.api_key
-            settings = model_settings_store.save(base_url, api_key)
+            if "model" in payload:
+                model_value = payload["model"]
+                if not isinstance(model_value, str):
+                    return jsonify({"error": "模型名称必须是文本"}), 400
+                model = model_value
+            else:
+                model = current.model
+            settings = model_settings_store.save(
+                base_url,
+                api_key,
+                model,
+                model_defaults[2],
+            )
         except ModelSettingsError as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify({
             "base_url": settings.base_url,
-            "model": config.skill4re_model,
+            "model": settings.model,
+            "default_model": settings.default_model,
             "backend": config.skill4re_backend,
             "api_key_configured": settings.api_key_configured,
         }), 200

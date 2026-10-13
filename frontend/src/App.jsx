@@ -1,5 +1,4 @@
 import Alert from "@arco-design/web-react/es/Alert";
-import Badge from "@arco-design/web-react/es/Badge";
 import Button from "@arco-design/web-react/es/Button";
 import Message from "@arco-design/web-react/es/Message";
 import Modal from "@arco-design/web-react/es/Modal";
@@ -14,12 +13,21 @@ import ResultEmptyState from "./components/ResultEmptyState";
 import TaskTable from "./components/TaskTable";
 import UploadPanel from "./components/UploadPanel";
 import useAgentEvents from "./lib/useAgentEvents";
-import { exportTaskCsv, getHealth, getTaskResult, getTaskStatus, refreshTaskStatus, uploadFiles } from "./lib/api";
+import { exportTaskCsv, getTaskResult, getTaskStatus, refreshTaskStatus, uploadFiles } from "./lib/api";
 
 const terminalStatuses = ["succeeded", "failed", "cancelled"];
 const ResultViewer = lazy(() => import("./components/ResultViewer"));
 const SkillManager = lazy(() => import("./components/SkillManager"));
 const ModelSettings = lazy(() => import("./components/ModelSettings"));
+
+function ModelKeyIcon() {
+  return (
+    <svg aria-hidden="true" focusable="false" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="5" />
+      <path d="m11.5 11.5 9 9m-3-3 2-2m-5-1 2-2" />
+    </svg>
+  );
+}
 
 function readWorkspaceTaskIds() {
   const taskIds = JSON.parse(localStorage.getItem("docre-task-ids") || "[]");
@@ -49,7 +57,9 @@ export default function App() {
   const [resultRetry, setResultRetry] = useState(0);
   const [activeTaskId, setActiveTaskId] = useState(() => localStorage.getItem("docre-active-task"));
   const [view, setView] = useState("tasks");
-  const [health, setHealth] = useState({ loading: true, status: "checking" });
+  const [modelSettingsVisible, setModelSettingsVisible] = useState(false);
+  const [modelSettingsMounted, setModelSettingsMounted] = useState(false);
+  const modelSettingsTriggerRef = useRef(null);
 
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
@@ -85,14 +95,6 @@ export default function App() {
   }, [workspaceTaskIds]);
 
   useEffect(() => {
-    let cancelled = false;
-    getHealth()
-      .then((payload) => !cancelled && setHealth({ loading: false, ...payload }))
-      .catch(() => !cancelled && setHealth({ loading: false, status: "degraded" }));
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
     if (activeTaskId) localStorage.setItem("docre-active-task", activeTaskId);
     else localStorage.removeItem("docre-active-task");
   }, [activeTaskId]);
@@ -121,16 +123,6 @@ export default function App() {
     [tasks, activeTaskId]
   );
   const agentEvents = useAgentEvents(activeTask, results[activeTaskId]);
-
-  async function refreshHealth() {
-    setHealth({ loading: true, status: "checking" });
-    try {
-      const payload = await getHealth();
-      setHealth({ loading: false, ...payload });
-    } catch {
-      setHealth({ loading: false, status: "degraded" });
-    }
-  }
 
   useEffect(() => {
     setResultError("");
@@ -228,9 +220,6 @@ export default function App() {
     setFileList((current) => current.filter((item) => item.uid !== file.uid));
   }
 
-  const healthColor = health.status === "ok" ? "success" : health.loading ? "processing" : "warning";
-  const healthText = health.status === "ok" ? "服务正常" : health.loading ? "服务检查中" : "服务待检查";
-
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -245,26 +234,28 @@ export default function App() {
           <Button type={view === "tasks" ? "secondary" : "text"} aria-current={view === "tasks" ? "page" : undefined} icon={<IconApps />} onClick={() => setView("tasks")}>任务中心</Button>
           <Button type={view === "skills" ? "secondary" : "text"} aria-current={view === "skills" ? "page" : undefined} icon={<IconRobot />} onClick={() => setView("skills")}>Skills</Button>
         </nav>
-        <div className="service-status">
-          <Tooltip content={health.status === "ok" ? "Redis、OCR 与推理服务可用" : "服务状态暂不可用"}>
-            <Badge status={healthColor} text={healthText} />
-          </Tooltip>
-          <Tooltip content="设置模型 API 地址和 Key">
-            <button
-              type="button"
-              className="model-name"
-              aria-label="模型设置：API 地址和 Key"
-              aria-current={view === "settings" ? "page" : undefined}
-              onClick={() => setView("settings")}
-            >Qwen / vLLM</button>
+        <div className="header-actions">
+          <Tooltip content="设置主模型 API Key、请求地址和模型名称">
+            <span className="header-actions-trigger">
+              <Button
+                type="text"
+                className="model-name"
+                icon={<ModelKeyIcon />}
+                ref={modelSettingsTriggerRef}
+                aria-haspopup="dialog"
+                aria-expanded={modelSettingsVisible}
+                onClick={() => {
+                  setModelSettingsMounted(true);
+                  setModelSettingsVisible(true);
+                }}
+              >模型切换</Button>
+            </span>
           </Tooltip>
         </div>
       </header>
       <main className="app-content">
         {view === "skills" ? (
           <Suspense fallback={<div className="page-loading" role="status"><Spin />正在加载 Skills…</div>}><SkillManager /></Suspense>
-        ) : view === "settings" ? (
-          <Suspense fallback={<div className="page-loading" role="status"><Spin />正在加载模型设置…</div>}><ModelSettings onSaved={refreshHealth} /></Suspense>
         ) : (
           <>
             {restoring && <div className="workspace-loading" role="status">正在恢复任务记录…</div>}
@@ -291,6 +282,15 @@ export default function App() {
           </>
         )}
       </main>
+      {modelSettingsMounted && (
+        <Suspense fallback={null}>
+          <ModelSettings
+            visible={modelSettingsVisible}
+            onClose={() => setModelSettingsVisible(false)}
+            onAfterClose={() => modelSettingsTriggerRef.current?.focus()}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

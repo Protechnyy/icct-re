@@ -81,16 +81,20 @@ class Skill4ReClient:
         if self._client is not None and base_url:
             self._client = self._client.with_options(
                 base_url=normalize_openai_base_url(base_url))
+        extractor_base_url = base_url
+        if defaults is not None and self.model_settings_store.fingerprint() is None:
+            # Keep the raw default URL for the requests fallback, which normalizes it itself.
+            extractor_base_url = defaults[0]
 
         self.extractor = self._extractor_class(
             skills=self.skills,
             backend=self.config.skill4re_backend,
-            model=self.config.skill4re_model,
+            model=model_settings.model if model_settings is not None else self.config.skill4re_model,
             client=self._client,
             local_generator=self._local_generator,
             route_cache=self.route_cache,
             api_key=api_key,
-            base_url=base_url,
+            base_url=extractor_base_url,
             request_timeout=self.config.vllm_timeout_seconds,
             enable_thinking=self.config.vllm_enable_thinking,
             stream_thinking=self.config.stream_thinking,

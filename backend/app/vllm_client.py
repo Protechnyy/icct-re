@@ -33,6 +33,8 @@ class VllmClient:
                 f"{settings.base_url}/models", timeout=5, headers=self._headers(settings)
             )
             if response.ok:
+                if getattr(self.config, "skill4re_backend", "vllm") == "qwen_api":
+                    return self._chat_completion_healthcheck(settings)
                 return True
             if response.status_code not in {404, 405}:
                 return False
@@ -43,14 +45,12 @@ class VllmClient:
     def _chat_completion_healthcheck(self, settings: ModelSettings | None = None) -> bool:
         settings = settings or self._settings()
         payload = {
-            "model": self.config.vllm_model,
+            "model": settings.model,
             "messages": [{"role": "user", "content": "ping"}],
             "temperature": 0,
             "max_tokens": 1,
             "stream": False,
-            "chat_template_kwargs": {
-                "enable_thinking": self.config.vllm_enable_thinking,
-            },
+            **self._thinking_options(),
         }
         try:
             response = self.session.post(
@@ -73,15 +73,13 @@ class VllmClient:
         user_prompt = f"任务上下文：{context}\n\n文本：\n{text}"
         settings = self._settings()
         payload = {
-            "model": self.config.vllm_model,
+            "model": settings.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0,
-            "chat_template_kwargs": {
-                "enable_thinking": self.config.vllm_enable_thinking,
-            },
+            **self._thinking_options(),
         }
         try:
             response = self.session.post(
@@ -110,6 +108,11 @@ class VllmClient:
             headers["Authorization"] = f"Bearer {settings.api_key}"
         return headers
 
+    def _thinking_options(self) -> dict[str, Any]:
+        if getattr(self.config, "skill4re_backend", "vllm") == "qwen_api":
+            return {"enable_thinking": self.config.vllm_enable_thinking}
+        return {"chat_template_kwargs": {"enable_thinking": self.config.vllm_enable_thinking}}
+
     def _base_url(self) -> str:
         return self._settings().base_url
 
@@ -118,8 +121,15 @@ class VllmClient:
         if defaults is not None:
             if self.settings_store is not None:
                 return self.settings_store.get(*defaults)
-            return ModelSettings(normalize_openai_base_url(defaults[0]), defaults[1])
+            return ModelSettings(
+                normalize_openai_base_url(defaults[0]),
+                defaults[1],
+                defaults[2],
+                defaults[2],
+            )
         return ModelSettings(
             normalize_openai_base_url(self.config.vllm_base_url),
             self.config.vllm_api_key,
+            self.config.vllm_model,
+            self.config.vllm_model,
         )

@@ -101,6 +101,27 @@ class ApiResponse:
         return {"choices": [{"message": {"content": self.content}}]}
 
 
+def test_qwen_healthcheck_rejects_exhausted_quota_even_when_models_are_listed() -> None:
+    config = SimpleNamespace(
+        vllm_base_url="https://example.com/v1",
+        vllm_api_key="test-key",
+        vllm_model="qwen",
+        vllm_timeout_seconds=10,
+        vllm_enable_thinking=False,
+        skill4re_backend="qwen_api",
+    )
+    calls = []
+
+    class QuotaSession(RecordingSession):
+        def post(self, url, **kwargs):
+            calls.append(kwargs["json"])
+            return ApiResponse(403)
+
+    assert VllmClient(config, session=QuotaSession()).healthcheck() is False
+    assert calls[0]["enable_thinking"] is False
+    assert "chat_template_kwargs" not in calls[0]
+
+
 def test_skill4re_requests_retries_transient_bad_gateway(monkeypatch) -> None:
     responses = [
         ApiResponse(502, "<html><title>api.asukalangely.top | 502: Bad gateway</title></html>"),
