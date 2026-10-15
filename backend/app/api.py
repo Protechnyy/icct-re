@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
@@ -14,6 +14,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 
 from .config import AppConfig, RELATION_SPLIT_MODES
 from .llm_stream import decode_entry, stream_key
+from .model_settings import ModelSettingsError, ModelSettingsStore, main_model_settings_defaults
 from .paddle_ocr import PaddleOcrClient
 from .skill_store import SkillStore, SkillStoreError
 from .task_store import RedisTaskStore
@@ -44,7 +45,8 @@ def create_app() -> Flask:
 
     task_store = RedisTaskStore(config.redis_url)
     ocr_client = PaddleOcrClient(config)
-    vllm_client = VllmClient(config)
+    model_settings_store = ModelSettingsStore(config.storage_root)
+    vllm_client = VllmClient(config, settings_store=model_settings_store)
     skill_store = SkillStore(config)
 
     LOGGER.info("API config loaded: %s", config.safe_summary())
@@ -227,6 +229,68 @@ def create_app() -> Flask:
         status_code = 200 if all(dependencies.values()) else 503
         return jsonify(health_info), status_code
 
+    @app.get("/api/settings/model")
+    def get_model_settings() -> tuple[object, int]:
+        model_defaults = main_model_settings_defaults(config)
+        if model_defaults is None:
+            return jsonify({"error": "当前主模型使用本地后端，远程 API 设置不可用"}), 409
+        try:
+            settings = model_settings_store.get(*model_defaults)
+        except ModelSettingsError as exc:
+            return jsonify({"error": str(exc)}), 500
+        return jsonify({
+            "base_url": settings.base_url,
+            "model": settings.model,
+            "default_model": settings.default_model,
+            "backend": config.skill4re_backend,
+            "api_key_configured": settings.api_key_configured,
+        }), 200
+
+    @app.put("/api/settings/model")
+    def update_model_settings() -> tuple[object, int]:
+        if not _model_settings_write_allowed():
+            return jsonify({"error": "模型设置只能从本机或同源页面更新"}), 403
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "请求内容必须是 JSON 对象"}), 400
+        base_url = payload.get("base_url")
+        if not isinstance(base_url, str) or not base_url.strip():
+            return jsonify({"error": "API 地址不能为空"}), 400
+        model_defaults = main_model_settings_defaults(config)
+        if model_defaults is None:
+            return jsonify({"error": "当前主模型使用本地后端，远程 API 设置不可用"}), 409
+        try:
+            current = model_settings_store.get(*model_defaults)
+            if "api_key" in payload:
+                api_key_value = payload["api_key"]
+                if not isinstance(api_key_value, str):
+                    return jsonify({"error": "API Key 必须是文本"}), 400
+                api_key = api_key_value.strip() or current.api_key
+            else:
+                api_key = current.api_key
+            if "model" in payload:
+                model_value = payload["model"]
+                if not isinstance(model_value, str):
+                    return jsonify({"error": "模型名称必须是文本"}), 400
+                model = model_value
+            else:
+                model = current.model
+            settings = model_settings_store.save(
+                base_url,
+                api_key,
+                model,
+                model_defaults[2],
+            )
+        except ModelSettingsError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({
+            "base_url": settings.base_url,
+            "model": settings.model,
+            "default_model": settings.default_model,
+            "backend": config.skill4re_backend,
+            "api_key_configured": settings.api_key_configured,
+        }), 200
+
     @app.get("/api/skills")
     def list_skills() -> tuple[object, int]:
         try:
@@ -273,6 +337,20 @@ def create_app() -> Flask:
 
 def _target_path(storage_root: Path, task_id: str, filename: str) -> Path:
     return storage_root / "uploads" / task_id / filename
+
+
+def _model_settings_write_allowed() -> bool:
+    origin = request.headers.get("Origin")
+    if not origin:
+        return request.remote_addr in {"127.0.0.1", "::1"}
+    parsed_origin = urlsplit(origin)
+    origin_host = parsed_origin.hostname
+    request_host = urlsplit(f"{request.scheme}://{request.host}").hostname
+    return bool(
+        parsed_origin.scheme in {"http", "https"}
+        and origin_host
+        and (origin_host in {"localhost", "127.0.0.1", "::1"} or origin_host == request_host)
+    )
 
 
 CSV_COLUMNS = (
