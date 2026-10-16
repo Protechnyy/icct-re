@@ -38,7 +38,7 @@ cp .env.example .env
 
 ## 启动 Redis
 
-下面命令会直接从镜像源拉取 Redis 7 并启动后台容器：
+首次创建并启动 Redis 7：
 
 ```bash
 sudo docker run -d \
@@ -48,9 +48,17 @@ sudo docker run -d \
   m.daocloud.io/docker.io/library/redis:7
 ```
 
+停止后再次启动：
+
+```bash
+sudo docker start docre-redis
+```
+
 ## 启动 PaddleOCR-VL
 
-OCR 版面解析默认使用本地部署的 PaddleOCR-VL（`PaddleOCR-VL-1.6-0.9B`）。先通过 Docker 启动 `paddlex_genai_server`：
+OCR 版面解析默认使用本地部署的 PaddleOCR-VL（`PaddleOCR-VL-1.6-0.9B`）。
+
+首次创建并启动 `paddlex_genai_server`：
 
 ```bash
 sudo docker run -d \
@@ -65,6 +73,12 @@ sudo docker run -d \
     --host 0.0.0.0 \
     --port 8118 \
     --backend vllm
+```
+
+停止后再次启动：
+
+```bash
+sudo docker start docre-paddleocr
 ```
 
 后端默认通过 PaddleOCR Python API 连接本机 `8118/v1`：
