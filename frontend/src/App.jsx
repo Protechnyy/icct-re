@@ -43,7 +43,6 @@ export default function App() {
   const [relationOptions, setRelationOptions] = useState({
     split_mode: "small_section",
     batch_size: 1,
-    fast_mode: false,
     stream_thinking: true,
     thinking_budget: 1024,
   });

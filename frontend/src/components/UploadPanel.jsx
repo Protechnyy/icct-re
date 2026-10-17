@@ -4,7 +4,7 @@ import InputNumber from "@arco-design/web-react/es/InputNumber";
 import Radio from "@arco-design/web-react/es/Radio";
 import Slider from "@arco-design/web-react/es/Slider";
 import Upload from "@arco-design/web-react/es/Upload";
-import { IconDelete, IconFile, IconFileImage, IconFilePdf, IconThunderbolt, IconUpload } from "@arco-design/web-react/icon";
+import { IconDelete, IconFile, IconFileImage, IconFilePdf, IconUpload } from "@arco-design/web-react/icon";
 import "@arco-design/web-react/es/InputNumber/style/css.js";
 import "@arco-design/web-react/es/Radio/style/css.js";
 import "@arco-design/web-react/es/Slider/style/css.js";
@@ -118,7 +118,6 @@ export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, su
       </div>
       <div className="extraction-actions">
         <Button className="submit-task-button" type="primary" icon={<IconUpload />} loading={submitting} disabled={!fileList.length} onClick={onSubmit}>开始抽取</Button>
-        <Button className="fast-mode-button" type={relationOptions.fast_mode ? "secondary" : "outline"} icon={<IconThunderbolt />} aria-pressed={relationOptions.fast_mode === true} disabled={submitting} onClick={() => updateOptions({ fast_mode: !relationOptions.fast_mode })}>极速模式</Button>
       </div>
     </Card>
   );

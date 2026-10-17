@@ -120,10 +120,8 @@ input, textarea { caret-color: rgb(var(--primary-6)); }
 .thinking-switch-row { display: flex; align-items: center; gap: var(--space-2); padding-top: 4px; }
 .thinking-switch-hint { color: var(--text-muted); font-size: 12px; }
 .advanced-note { color: var(--text-muted); font-size: 12px; padding: 0 var(--space-2) var(--space-2); }
-.extraction-actions { display: flex; gap: var(--space-2); margin-top: var(--space-5); }
-.submit-task-button { flex: 1; min-height: 40px; font-weight: 500; }
-.fast-mode-button { flex: none; min-height: 40px; }
-.fast-mode-button[aria-pressed="true"] { color: rgb(var(--primary-6)); background: rgb(var(--primary-1)); }
+.extraction-actions { display: flex; justify-content: center; margin-top: var(--space-5); }
+.submit-task-button { min-width: 144px; min-height: 40px; font-weight: 500; }
 
 .task-list-card { min-height: 224px; display: flex; flex-direction: column; }
 .task-list-card .arco-card-body { padding: 0 var(--space-3) var(--space-3); min-height: 0; display: flex; flex: 1; flex-direction: column; }
