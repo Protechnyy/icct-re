@@ -192,6 +192,9 @@ def route_with_llm(
     retry_backoff_seconds: float = 2.0,
 ) -> Dict:
     prompt = build_router_prompt(text[:3000], scores, skills)
+    # 部分自部署端点会把隐藏的思考 token 计入 max_tokens 配额（reasoning_tokens
+    # 约 458 起步且随文档变长），vllm 档需要预留思考开销
+    router_max_tokens = 160 if backend == "local_qwen3" else (1200 if backend == "vllm" else 500)
     if client is not None or local_generator is not None:
         content = generate_text(
             prompt=prompt,
@@ -199,7 +202,7 @@ def route_with_llm(
             api_client=client,
             local_generator=local_generator,
             model=model,
-            max_tokens=160 if backend == "local_qwen3" else 500,
+            max_tokens=router_max_tokens,
             response_format=ROUTER_RESPONSE_FORMAT,
             on_delta=on_delta,
             stream_id=stream_id,
@@ -211,7 +214,7 @@ def route_with_llm(
             prompt=prompt,
             api_key=api_key,
             model=model,
-            max_tokens=160 if backend == "local_qwen3" else 500,
+            max_tokens=router_max_tokens,
             backend=backend,
             response_format=ROUTER_RESPONSE_FORMAT,
             base_url=base_url,

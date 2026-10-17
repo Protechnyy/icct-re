@@ -250,16 +250,15 @@ def strip_think_section(content: str) -> str:
 
 
 class _ThinkAnswerSplitter:
-    """content 混合思考与答案时按 </think> 标识分流：
-    标识之前的内容归 think，之后归 answer；标识可能被切在相邻 delta 之间，
-    因此 thinking 阶段始终缓冲与标识等长的尾巴，确认后统一下发。"""
+    """content 混合思考与答案时按 </think> 标识分流：标识之前的内容归 think，
+    之后归 answer；标识可能被切在相邻 delta 之间。部分端点忽略 enable_thinking
+    参数，content 形态在「思考+标识+答案」与「直接输出答案」之间漂移，无法在
+    流开头预判，因此标识出现前统一下发，流结束时仍未见到标识则把全部缓冲
+    归 answer，保证纯答案场景返回值非空。"""
 
     def __init__(self):
         self.state = "thinking"
         self.pending = ""
-
-    def _emit(self, emit: Callable[[str, str], None], text: str) -> None:
-        emit("think" if self.state == "thinking" else "answer", text)
 
     def feed(self, text: str, emit: Callable[[str, str], None]) -> None:
         self.pending += text
@@ -270,21 +269,18 @@ class _ThinkAnswerSplitter:
             head = self.pending[:idx]
             self.pending = self.pending[idx + len(THINK_CLOSE_TAG):]
             if head:
-                self._emit(emit, head)
+                emit("think", head)
             self.state = "answer"
-        if self.state == "thinking":
-            keep = len(THINK_CLOSE_TAG) - 1
-            if len(self.pending) > keep:
-                self._emit(emit, self.pending[:-keep])
-                self.pending = self.pending[-keep:]
-        elif self.pending:
-            self._emit(emit, self.pending)
+        if self.state == "answer" and self.pending:
+            emit("answer", self.pending)
             self.pending = ""
 
     def flush(self, emit: Callable[[str, str], None]) -> None:
-        if self.pending:
-            self._emit(emit, self.pending)
-            self.pending = ""
+        if not self.pending:
+            return
+        # 流结束仍未出现标识：本次响应没有思考分离结构，缓冲内容整体作为 answer
+        emit("answer", self.pending)
+        self.pending = ""
 
 
 def _consume_requests_stream(response, on_delta: Callable[[str, str, str], None], stream_id: str, stream_thinking: bool) -> str:
@@ -390,12 +386,15 @@ def generate_text_with_requests(
         "stream": stream_requested,
     }
     if stream_requested:
-        # 流式思考开关：qwen_api（DashScope 兼容端点）用顶层 enable_thinking，
-        # 自部署 vllm 端点与非流式一致走 chat_template_kwargs
+        # 流式思考开关：qwen_api（DashScope 兼容端点）用顶层 enable_thinking；
+        # 自部署 vllm 端点开启思考会触发不可见的隐藏思考（思考不返回、计入
+        # max_tokens 配额且不受 thinking_budget 约束，抽取类请求会被思考吃光
+        # 配额），统一按关闭思考请求；模型把思考混入 content 并带 </think>
+        # 标识时再由 _consume_requests_stream 分流
         if backend == "qwen_api":
             data["enable_thinking"] = stream_thinking
         if backend == "vllm":
-            data["chat_template_kwargs"] = {"enable_thinking": stream_thinking}
+            data["chat_template_kwargs"] = {"enable_thinking": False}
         # 思考强度：0 表示不限制，仅在流式且开启思考时下发
         if stream_thinking and thinking_budget > 0:
             data["thinking_budget"] = thinking_budget
