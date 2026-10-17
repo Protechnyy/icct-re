@@ -48,10 +48,8 @@ input, textarea { caret-color: rgb(var(--primary-6)); }
   border-bottom: 1px solid var(--line); background: var(--surface);
   display: flex; align-items: center; gap: var(--space-8);
 }
-.brand-block { display: flex; align-items: center; gap: var(--space-3); flex: none; }
-.brand-logo { width: 40px; height: 40px; flex: none; display: block; object-fit: contain; }
-.brand-title { color: var(--text-primary); font-size: 18px; font-weight: 650; line-height: 24px; }
-.brand-subtitle { color: var(--text-muted); font-size: 12px; line-height: 20px; }
+.brand-block { display: flex; align-items: center; flex: none; }
+.brand-logo { width: 240px; height: auto; flex: none; display: block; object-fit: contain; }
 .header-nav { display: flex; align-items: center; gap: var(--space-2); flex: 1; }
 .header-nav .arco-btn, .model-name.arco-btn { padding: 0 var(--space-4); color: var(--text-secondary); }
 .header-nav .arco-btn-secondary { color: rgb(var(--primary-6)); background: rgb(var(--primary-1)); font-weight: 600; }
@@ -337,9 +335,7 @@ input, textarea { caret-color: rgb(var(--primary-6)); }
   .task-more.arco-btn { min-width: 44px; }
   .app-header { flex-wrap: wrap; gap: var(--space-3); padding-top: var(--space-3); padding-bottom: var(--space-3); }
   .brand-block { flex: 1; }
-  .brand-logo { width: 36px; height: 36px; }
-  .brand-title { font-size: 16px; }
-  .brand-subtitle { font-size: 11px; }
+  .brand-logo { width: 192px; }
   .header-actions { order: 1; }
   .model-name.arco-btn { min-height: 44px; }
   .header-nav { order: 2; flex-basis: 100%; padding-top: var(--space-3); border-top: 1px solid var(--line); }

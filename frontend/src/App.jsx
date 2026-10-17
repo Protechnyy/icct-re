@@ -223,11 +223,7 @@ export default function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand-block">
-          <img className="brand-logo" src="/logo.png?v=agent-relation-blue" width={40} height={40} alt="ICCT-RE 智能体关系抽取标识" />
-          <div>
-            <div className="brand-title">ICCT-RE</div>
-            <div className="brand-subtitle">文档级关系抽取工作台</div>
-          </div>
+          <img className="brand-logo" src="/logo-wordmark.png?v=relation-workbench-20261017" width={2048} height={683} alt="关系抽取工作台" />
         </div>
         <nav className="header-nav" aria-label="主导航">
           <Button type={view === "tasks" ? "secondary" : "text"} aria-current={view === "tasks" ? "page" : undefined} icon={<IconApps />} onClick={() => setView("tasks")}>任务中心</Button>
