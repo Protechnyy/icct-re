@@ -231,6 +231,13 @@ input, textarea { caret-color: rgb(var(--primary-6)); }
 .llm-stream-block-answer .llm-stream-text { color: var(--text-primary); }
 .llm-stream-delta { animation: llm-stream-fade-in 0.35s ease-out; }
 @keyframes llm-stream-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.llm-stream-answer-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-1); font-family: inherit; font-size: 12.5px; }
+.llm-stream-answer-list ol, .llm-stream-answer-list li { list-style: none; }
+.llm-stream-answer-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); padding: 3px 0; border-bottom: 1px dashed var(--line); }
+.llm-stream-answer-line:last-child { border-bottom: none; }
+.llm-stream-answer-head { color: var(--text-primary); font-weight: 500; }
+.llm-stream-answer-relation { flex-shrink: 0; color: rgb(var(--primary-6)); font-size: 12px; }
+.llm-stream-answer-tail { color: var(--text-primary); }
 .llm-stream-placeholder { padding: var(--space-2) 0; color: var(--text-muted); font-size: 12.5px; }
 .result-empty-card { min-height: max(400px, calc(100dvh - 128px)); display: flex; flex-direction: column; }
 .result-empty-card > .arco-card-body { padding: 0; flex: 1; display: flex; flex-direction: column; }
