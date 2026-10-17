@@ -103,13 +103,13 @@ function DocumentPreview({ result }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [zoom, setZoom] = useState(100);
-  const text = result?.ocr_summary?.markdown_text || result?.document_meta?.markdown_text || result?.chunks?.map((chunk) => chunk.text).join("\n\n") || "当前任务未返回可预览的 OCR 原文。";
+  const text = result?.document_text || result?.ocr_summary?.markdown_text || result?.document_meta?.markdown_text || result?.chunks?.map((chunk) => chunk.text).join("\n\n") || "当前任务未返回可预览的文档原文。";
   const highlightedText = useMemo(() => {
     if (!query.trim()) return text;
     const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
     return parts.map((part, index) => part.toLocaleLowerCase() === query.trim().toLocaleLowerCase() ? <mark key={`${part}-${index}`}>{part}</mark> : part);
   }, [query, text]);
-  return <div className="document-preview"><div className="document-preview-toolbar"><Space size="small"><Button size="small" icon={<IconSearch />} onClick={() => setSearchOpen((current) => !current)}>搜索原文</Button><Button size="small" onClick={() => setZoom((current) => current >= 120 ? 90 : current + 10)}>{zoom}%</Button></Space><span>OCR 文本预览</span></div>{searchOpen && <div className="preview-search"><Input value={query} onChange={setQuery} allowClear placeholder="输入关键词，高亮原文匹配内容" /></div>}<article style={{ fontSize: `${zoom / 100}rem` }}>{highlightedText}</article></div>;
+  return <div className="document-preview"><div className="document-preview-toolbar"><Space size="small"><Button size="small" icon={<IconSearch />} onClick={() => setSearchOpen((current) => !current)}>搜索原文</Button><Button size="small" onClick={() => setZoom((current) => current >= 120 ? 90 : current + 10)}>{zoom}%</Button></Space><span>文档原文预览</span></div>{searchOpen && <div className="preview-search"><Input value={query} onChange={setQuery} allowClear placeholder="输入关键词，高亮原文匹配内容" /></div>}<article style={{ fontSize: `${zoom / 100}rem` }}>{highlightedText}</article></div>;
 }
 
 const STAGE_LABELS = {

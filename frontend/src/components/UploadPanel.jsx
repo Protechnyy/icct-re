@@ -47,7 +47,7 @@ export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, su
         drag
         autoUpload={false}
         multiple
-        accept=".pdf,.png,.jpg,.jpeg"
+        accept=".pdf,.png,.jpg,.jpeg,.bmp,.webp,.md,.markdown,.txt,.PDF,.PNG,.JPG,.JPEG,.BMP,.WEBP,.MD,.MARKDOWN,.TXT"
         fileList={fileList}
         showUploadList={false}
         onChange={(nextFileList) => onChange(nextFileList)}
@@ -56,7 +56,7 @@ export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, su
         <button type="button" className="upload-trigger" aria-label="选择文档文件">
           <IconUpload className="upload-icon" />
           <div className="upload-title">点击或拖拽文件到此处上传</div>
-          <div className="upload-hint">支持 PDF、PNG、JPG、JPEG，可批量上传</div>
+          <div className="upload-hint">支持 Markdown、TXT、PDF 和图片，可批量上传</div>
         </button>
       </Upload>
       {fileList.length > 0 && (
