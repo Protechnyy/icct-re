@@ -104,7 +104,13 @@ def score_judgments(paths):
             for kind, values in groups.items()}
 
 
-def replay_file(input_path, output_root, config, *, annotations=None, model=None, progress_callback=None):
+def replay_file(input_path, output_root, config, *, annotations=None, model=None, progress_callback=None,
+                base_url=None, model_name=None, model_settings_store=None):
+    from ..model_settings import resolve_model_settings
+
+    settings = resolve_model_settings(config, model_settings_store)
+    if base_url or model_name:
+        settings = replace(settings, base_url=base_url or settings.base_url, model=model_name or settings.model)
     source = Path(input_path).resolve()
     output_root = Path(output_root).resolve()
     if output_root == source.parent or source.parent in output_root.parents:
@@ -121,8 +127,9 @@ def replay_file(input_path, output_root, config, *, annotations=None, model=None
     identity = str(result.get("document_meta", {}).get("task_id") or source.parent.name)
     trace = Trace(progress_callback, document_task_id=identity)
     trace.emit("phase_start", summary="智能体校验已开始")
-    after, agent_result = verify_document(before, sections, result["document_text"], replace(config, agent_enabled=True),
-                                          progress_callback, model=model, trace=trace)
+    after, agent_result = verify_document(before, sections, result["document_text"],
+                                          replace(config, verification_agent_enabled=True),
+                                          progress_callback, model=model, trace=trace, settings=settings)
     trace.finish(agent_result)
     replayed = deepcopy(result)
     replayed.update({"pre_agent_relations": before, "final_relations": after,

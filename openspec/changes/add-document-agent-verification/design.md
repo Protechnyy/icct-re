@@ -213,7 +213,7 @@ pre_agent_relations   规则去重后的关系列表
 - 现有北京百炼部署接受并返回模型名 `qwen3.8-flash`；LangGraph 预制工具循环成功调用假工具，最终回答使用工具返回的随机值。这个实验确认接口模型 ID，不确认底层参数量。
 - 不传 `enable_thinking` 时，非流式工具循环成功，两个响应的 reasoning token 数分别为 30、24，说明该部署默认启用思考。无需关闭也能连通，但为控制成本，核查适配器显式传 `extra_body={"enable_thinking": false}`；对照实验成功，未返回 reasoning token 用量。
 - 两种模式都返回 `usage_metadata`（输入、输出、总令牌数）。默认模式两次调用总计 840 tokens、2.092 秒；关闭模式总计 711 tokens、3.443 秒。这只是单轮连通性实验，不能作为文档级成本或耗时评估。
-- 可复现脚本：`scripts/probe-agent-connection.py`。基于独立 `AGENT_*` 配置或显式的 `--base-url`、`--model` 参数，不记录密钥或思考文本。
+- 可复现脚本：`tools/verification/probe-agent-connection.py`。基于独立 `AGENT_*` 配置或显式的 `--base-url`、`--model` 参数，不记录密钥或思考文本。
 
 ### 待解决
 

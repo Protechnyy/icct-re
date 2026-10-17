@@ -2,10 +2,7 @@ import json
 import logging
 from typing import Dict, List, Optional, Tuple
 
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
+from openai import OpenAI
 
 from skill4re.backends import LocalQwenGenerator, generate_text, generate_text_with_requests
 from skill4re.parsing import parse_json
@@ -44,6 +41,8 @@ def resolve_coreferences(
     base_url: Optional[str] = None,
     request_timeout: int = 120,
     enable_thinking: bool = False,
+    max_retries: int = 3,
+    retry_backoff_seconds: float = 2.0,
 ) -> Tuple[str, Dict[str, List[str]]]:
     """对文档做共指消解，返回 (替换后的文档, 映射表)。
 
@@ -69,6 +68,8 @@ def resolve_coreferences(
                 backend=backend,
                 base_url=base_url,
                 timeout=request_timeout,
+                max_retries=max_retries,
+                retry_backoff_seconds=retry_backoff_seconds,
                 enable_thinking=enable_thinking,
             )
         mapping = parse_json(content)

@@ -30,12 +30,12 @@ def _sse_event(event_name: str, data: str, seq: str) -> str:
     return f"event: {event_name}\ndata: {data}\nid: {seq}\n\n"
 
 
-def create_app() -> Flask:
+def create_app(config: AppConfig | None = None) -> Flask:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
-    config = AppConfig.from_env()
+    config = config if config is not None else AppConfig.from_env()
     config.ensure_storage_dirs()
 
     app = Flask(__name__)
@@ -61,7 +61,7 @@ def create_app() -> Flask:
             fast_mode_value = request.form.get("fast_mode")
             if fast_mode_value is not None and fast_mode_value not in {"true", "false"}:
                 raise ValueError("fast_mode must be true or false")
-            fast_mode = fast_mode_value == "true" if fast_mode_value is not None else not config.agent_enabled
+            fast_mode = fast_mode_value == "true" if fast_mode_value is not None else not config.verification_agent_enabled
             stream_thinking_value = request.form.get("stream_thinking")
             if stream_thinking_value is not None and stream_thinking_value not in {"true", "false"}:
                 raise ValueError("stream_thinking must be true or false")
@@ -242,7 +242,7 @@ def create_app() -> Flask:
             "base_url": settings.base_url,
             "model": settings.model,
             "default_model": settings.default_model,
-            "backend": config.skill4re_backend,
+            "backend": config.llm_backend,
             "api_key_configured": settings.api_key_configured,
         }), 200
 
@@ -287,7 +287,7 @@ def create_app() -> Flask:
             "base_url": settings.base_url,
             "model": settings.model,
             "default_model": settings.default_model,
-            "backend": config.skill4re_backend,
+            "backend": config.llm_backend,
             "api_key_configured": settings.api_key_configured,
         }), 200
 

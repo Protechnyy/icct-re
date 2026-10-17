@@ -235,7 +235,7 @@ export default function App() {
           <Button type={view === "skills" ? "secondary" : "text"} aria-current={view === "skills" ? "page" : undefined} icon={<IconRobot />} onClick={() => setView("skills")}>Skills</Button>
         </nav>
         <div className="header-actions">
-          <Tooltip content="设置主模型 API Key、请求地址和模型名称">
+          <Tooltip content="设置公共模型 API Key、请求地址和模型名称">
             <span className="header-actions-trigger">
               <Button
                 type="text"

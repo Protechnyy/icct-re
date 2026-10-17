@@ -70,7 +70,7 @@ cp .env.example .env
 cd ..
 ```
 
-编辑 `backend/.env`，至少核对 `REDIS_URL`、`PADDLE_OCR_SERVER_URL`、`VLLM_BASE_URL`、`VLLM_API_KEY`、`VLLM_MODEL`、`SKILL4RE_MODEL`。`VLLM_BASE_URL` 可填兼容接口的 `/v1` 地址或完整 `/v1/chat/completions` 地址；若模型名称变化，两个模型字段一起改。配置远程模型 API 即可，无需启动本地 vLLM；也可按 [README](../README.md) 切换为本地模型。
+编辑 `backend/.env`，核对 `REDIS_URL`、`PADDLE_OCR_SERVER_URL` 及公共 `LLM_BACKEND`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`。地址支持兼容接口的 `/v1` 或完整 `/v1/chat/completions` 地址。关系抽取、skills 路由和校验智能体共用模型连接，每篇文档开始处理时读取一次配置，全部 batch 和校验请求共用该快照。前端保存的设置对后续开始处理的文档生效。校验运行限制使用 `VERIFICATION_AGENT_*`，名称迁移及完整配置见 README。
 
 依赖服务就绪后，从仓库根目录分别启动：
 

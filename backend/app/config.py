@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +26,35 @@ DEFAULT_PADDLE_OCR_MAX_CONCURRENCY = 4
 DEFAULT_PADDLE_OCR_MODE = "python_api"
 DEFAULT_PADDLE_OCR_BASE_URL = "http://127.0.0.1:8118"
 DEFAULT_PADDLE_OCR_SERVER_URL = "http://127.0.0.1:8118/v1"
+
+RETIRED_MODEL_VARIABLES = {
+    "SKILL4RE_BACKEND": "LLM_BACKEND",
+    "SKILL4RE_BASE_URL": "LLM_BASE_URL",
+    "SKILL4RE_MODEL": "LLM_MODEL",
+    "VLLM_BASE_URL": "LLM_BASE_URL",
+    "VLLM_API_KEY": "LLM_API_KEY",
+    "VLLM_MODEL": "LLM_MODEL",
+    "VLLM_TIMEOUT_SECONDS": "LLM_REQUEST_TIMEOUT_SECONDS",
+    "VLLM_ENABLE_THINKING": "LLM_ENABLE_THINKING",
+    "VLLM_MAX_RETRIES": "LLM_MAX_RETRIES",
+    "VLLM_RETRY_BACKOFF_SECONDS": "LLM_RETRY_BACKOFF_SECONDS",
+    "SKILL4RE_API_MAX_RETRIES": "LLM_MAX_RETRIES",
+    "SKILL4RE_API_RETRY_BACKOFF_SECONDS": "LLM_RETRY_BACKOFF_SECONDS",
+    "AGENT_BASE_URL": "LLM_BASE_URL",
+    "AGENT_API_KEY": "LLM_API_KEY",
+    "AGENT_MODEL": "LLM_MODEL",
+    **{f"AGENT_{name}": f"VERIFICATION_AGENT_{name}" for name in (
+        "ENABLED", "CONCURRENCY", "MAX_TASKS", "MAX_STEPS", "MAX_LLM_CALLS",
+        "TIMEOUT_SECONDS", "MAX_ADDED_PER_TASK",
+    )},
+}
+
+
+def _positive_int(name: str, default: int) -> int:
+    value = int(os.getenv(name, str(default)))
+    if value < 1:
+        raise ValueError(f"{name} 必须是正整数")
+    return value
 
 
 def _as_bool(value: str | None, default: bool) -> bool:
@@ -51,20 +83,9 @@ def normalize_openai_base_url(value: str) -> str:
     return url
 
 
-def _load_dotenv() -> None:
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if not env_path.exists():
-        return
-
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip("'").strip('"')
-        os.environ.setdefault(key, value)
-
+def _load_dotenv(env_path: Path | None = None) -> None:
+    env_path = env_path or Path(__file__).resolve().parent.parent / ".env"
+    load_dotenv(env_path, override=False)
     LOGGER.debug("Loaded environment variables from %s", env_path)
 
 
@@ -78,21 +99,20 @@ class AppConfig:
     paddle_ocr_base_url: str
     paddle_ocr_server_url: str
     paddle_ocr_api_model_name: str
-    paddle_ocr_api_key: str
+    paddle_ocr_api_key: str = field(repr=False)
     paddle_ocr_timeout_seconds: int
     paddle_ocr_file_mode: str
-    vllm_base_url: str
-    vllm_api_key: str
-    vllm_model: str
-    vllm_timeout_seconds: int
-    vllm_enable_thinking: bool
+    llm_base_url: str
+    llm_api_key: str = field(repr=False)
+    llm_model: str
+    llm_request_timeout_seconds: int
+    llm_enable_thinking: bool
     ocr_concurrency: int
     llm_concurrency: int
     max_chunk_chars: int
     sentence_stage_limit: int
     page_stage_limit: int
-    skill4re_backend: str
-    skill4re_model: str
+    llm_backend: str
     skill4re_skills_dir: Path
     skill4re_route_cache_path: Path
     skill4re_chunk_trigger: int
@@ -111,27 +131,31 @@ class AppConfig:
     relation_max_batch_tokens: int = DEFAULT_RELATION_MAX_BATCH_TOKENS
     relation_include_parent_title: bool = DEFAULT_RELATION_INCLUDE_PARENT_TITLE
     relation_batch_concurrency: int = DEFAULT_RELATION_BATCH_CONCURRENCY
-    agent_enabled: bool = False
-    agent_base_url: str = DEFAULT_LLM_BASE_URL
-    agent_api_key: str = ""
-    agent_model: str = DEFAULT_LLM_MODEL
-    agent_concurrency: int = 1
-    agent_max_tasks: int = 20
-    agent_max_steps: int = 6
-    agent_max_llm_calls: int = 80
-    agent_timeout_seconds: int = 600
-    agent_max_added_per_task: int = 5
+    verification_agent_enabled: bool = False
+    verification_agent_concurrency: int = 1
+    verification_agent_max_tasks: int = 20
+    verification_agent_max_steps: int = 6
+    verification_agent_max_llm_calls: int = 80
+    verification_agent_timeout_seconds: int = 600
+    verification_agent_max_added_per_task: int = 5
+    llm_max_retries: int = 3
+    llm_retry_backoff_seconds: float = 2.0
     stream_enabled: bool = True
     stream_thinking: bool = True
 
     @classmethod
-    def from_env(cls) -> "AppConfig":
-        _load_dotenv()
+    def from_env(cls, env_path: Path | None = None) -> "AppConfig":
+        _load_dotenv(env_path)
+        retired = [f"{old} → {new}" for old, new in RETIRED_MODEL_VARIABLES.items() if old in os.environ]
+        if retired:
+            raise ValueError("请更新模型配置名称：" + "；".join(retired))
         storage_root = Path(os.getenv("STORAGE_ROOT", "../data")).expanduser().resolve()
         repo_root = Path(__file__).resolve().parents[2]
         default_skill4re_skills_dir = repo_root / "skill4re" / "skill4re" / "skills"
         default_skill4re_route_cache = storage_root / "tmp" / "skill4re_route_cache.json"
-        vllm_model = os.getenv("VLLM_MODEL", DEFAULT_LLM_MODEL)
+        retry_backoff = float(os.getenv("LLM_RETRY_BACKOFF_SECONDS", "2"))
+        if not math.isfinite(retry_backoff) or retry_backoff < 0:
+            raise ValueError("LLM_RETRY_BACKOFF_SECONDS 必须是有限的非负数")
         return cls(
             api_host=os.getenv("API_HOST", "0.0.0.0"),
             api_port=int(os.getenv("API_PORT", "5000")),
@@ -148,18 +172,19 @@ class AppConfig:
             ),
             paddle_ocr_timeout_seconds=int(os.getenv("PADDLE_OCR_TIMEOUT_SECONDS", "180")),
             paddle_ocr_file_mode=os.getenv("PADDLE_OCR_FILE_MODE", "base64"),
-            vllm_base_url=normalize_openai_base_url(os.getenv("VLLM_BASE_URL", DEFAULT_LLM_BASE_URL)),
-            vllm_api_key=os.getenv("VLLM_API_KEY", "EMPTY"),
-            vllm_model=vllm_model,
-            vllm_timeout_seconds=int(os.getenv("VLLM_TIMEOUT_SECONDS", "180")),
-            vllm_enable_thinking=_as_bool(os.getenv("VLLM_ENABLE_THINKING"), False),
+            llm_base_url=normalize_openai_base_url(os.getenv("LLM_BASE_URL", DEFAULT_LLM_BASE_URL)),
+            llm_api_key=os.getenv("LLM_API_KEY", ""),
+            llm_model=os.getenv("LLM_MODEL", DEFAULT_LLM_MODEL).strip(),
+            llm_request_timeout_seconds=_positive_int("LLM_REQUEST_TIMEOUT_SECONDS", 180),
+            llm_enable_thinking=_as_bool(os.getenv("LLM_ENABLE_THINKING"), False),
+            llm_max_retries=_positive_int("LLM_MAX_RETRIES", 3),
+            llm_retry_backoff_seconds=retry_backoff,
             ocr_concurrency=int(os.getenv("OCR_CONCURRENCY", "1")),
             llm_concurrency=int(os.getenv("LLM_CONCURRENCY", "4")),
             max_chunk_chars=int(os.getenv("MAX_CHUNK_CHARS", "2400")),
             sentence_stage_limit=int(os.getenv("SENTENCE_STAGE_LIMIT", "12")),
             page_stage_limit=int(os.getenv("PAGE_STAGE_LIMIT", "12")),
-            skill4re_backend=os.getenv("SKILL4RE_BACKEND", "vllm"),
-            skill4re_model=os.getenv("SKILL4RE_MODEL", vllm_model),
+            llm_backend=os.getenv("LLM_BACKEND", "vllm").strip(),
             skill4re_skills_dir=Path(
                 os.getenv("SKILL4RE_SKILLS_DIR", str(default_skill4re_skills_dir))
             ).expanduser().resolve(),
@@ -205,17 +230,13 @@ class AppConfig:
                 os.getenv("RELATION_BATCH_CONCURRENCY"),
                 DEFAULT_RELATION_BATCH_CONCURRENCY,
             ),
-            agent_enabled=_as_bool(os.getenv("AGENT_ENABLED"), False),
-            agent_base_url=normalize_openai_base_url(os.getenv(
-                "AGENT_BASE_URL", DEFAULT_LLM_BASE_URL)),
-            agent_api_key=os.getenv("AGENT_API_KEY", ""),
-            agent_model=os.getenv("AGENT_MODEL", DEFAULT_LLM_MODEL),
-            agent_concurrency=_as_int(os.getenv("AGENT_CONCURRENCY"), 1),
-            agent_max_tasks=_as_int(os.getenv("AGENT_MAX_TASKS"), 20),
-            agent_max_steps=_as_int(os.getenv("AGENT_MAX_STEPS"), 6),
-            agent_max_llm_calls=_as_int(os.getenv("AGENT_MAX_LLM_CALLS"), 80),
-            agent_timeout_seconds=_as_int(os.getenv("AGENT_TIMEOUT_SECONDS"), 600),
-            agent_max_added_per_task=_as_int(os.getenv("AGENT_MAX_ADDED_PER_TASK"), 5),
+            verification_agent_enabled=_as_bool(os.getenv("VERIFICATION_AGENT_ENABLED"), False),
+            verification_agent_concurrency=_positive_int("VERIFICATION_AGENT_CONCURRENCY", 1),
+            verification_agent_max_tasks=_positive_int("VERIFICATION_AGENT_MAX_TASKS", 20),
+            verification_agent_max_steps=_positive_int("VERIFICATION_AGENT_MAX_STEPS", 6),
+            verification_agent_max_llm_calls=_positive_int("VERIFICATION_AGENT_MAX_LLM_CALLS", 80),
+            verification_agent_timeout_seconds=_positive_int("VERIFICATION_AGENT_TIMEOUT_SECONDS", 600),
+            verification_agent_max_added_per_task=_positive_int("VERIFICATION_AGENT_MAX_ADDED_PER_TASK", 5),
             stream_enabled=_as_bool(os.getenv("STREAM_ENABLED"), True),
             stream_thinking=_as_bool(os.getenv("STREAM_THINKING"), True),
         )
@@ -224,7 +245,7 @@ class AppConfig:
         for relative in ("uploads", "results", "tmp"):
             (self.storage_root / relative).mkdir(parents=True, exist_ok=True)
 
-    def safe_summary(self) -> dict[str, str | int | bool]:
+    def safe_summary(self) -> dict[str, str | int | float | bool]:
         return {
             "api_host": self.api_host,
             "api_port": self.api_port,
@@ -234,13 +255,15 @@ class AppConfig:
             "paddle_ocr_base_url": self.paddle_ocr_base_url,
             "paddle_ocr_server_url": self.paddle_ocr_server_url,
             "paddle_ocr_max_concurrency": self.paddle_ocr_max_concurrency,
-            "vllm_base_url": self.vllm_base_url,
-            "vllm_model": self.vllm_model,
-            "vllm_enable_thinking": self.vllm_enable_thinking,
+            "llm_base_url": self.llm_base_url,
+            "llm_model": self.llm_model,
+            "llm_backend": self.llm_backend,
+            "llm_request_timeout_seconds": self.llm_request_timeout_seconds,
+            "llm_enable_thinking": self.llm_enable_thinking,
+            "llm_max_retries": self.llm_max_retries,
+            "llm_retry_backoff_seconds": self.llm_retry_backoff_seconds,
             "ocr_concurrency": self.ocr_concurrency,
             "llm_concurrency": self.llm_concurrency,
-            "skill4re_backend": self.skill4re_backend,
-            "skill4re_model": self.skill4re_model,
             "skill4re_skills_dir": str(self.skill4re_skills_dir),
             "skill4re_chunk_trigger": self.skill4re_chunk_trigger,
             "skill4re_chunk_budget": self.skill4re_chunk_budget,
@@ -255,15 +278,13 @@ class AppConfig:
             "relation_max_batch_tokens": self.relation_max_batch_tokens,
             "relation_include_parent_title": self.relation_include_parent_title,
             "relation_batch_concurrency": self.relation_batch_concurrency,
-            "agent_enabled": self.agent_enabled,
-            "agent_base_url": self.agent_base_url,
-            "agent_model": self.agent_model,
-            "agent_concurrency": self.agent_concurrency,
-            "agent_max_tasks": self.agent_max_tasks,
-            "agent_max_steps": self.agent_max_steps,
-            "agent_max_llm_calls": self.agent_max_llm_calls,
-            "agent_timeout_seconds": self.agent_timeout_seconds,
-            "agent_max_added_per_task": self.agent_max_added_per_task,
+            "verification_agent_enabled": self.verification_agent_enabled,
+            "verification_agent_concurrency": self.verification_agent_concurrency,
+            "verification_agent_max_tasks": self.verification_agent_max_tasks,
+            "verification_agent_max_steps": self.verification_agent_max_steps,
+            "verification_agent_max_llm_calls": self.verification_agent_max_llm_calls,
+            "verification_agent_timeout_seconds": self.verification_agent_timeout_seconds,
+            "verification_agent_max_added_per_task": self.verification_agent_max_added_per_task,
             "stream_enabled": self.stream_enabled,
             "stream_thinking": self.stream_thinking,
         }

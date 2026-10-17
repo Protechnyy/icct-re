@@ -89,24 +89,44 @@ PADDLE_OCR_BASE_URL=http://127.0.0.1:8118
 PADDLE_OCR_SERVER_URL=http://127.0.0.1:8118/v1
 ```
 
-## 关系抽取 Qwen API
+## 公共模型配置
 
-默认配置通过远程 OpenAI 兼容 API 调用 `qwen3.8-27b`。复制 `backend/.env.example` 为 `backend/.env` 后，填写有效的 `VLLM_API_KEY` 即可，无需启动本地 vLLM。
+关系抽取、skills 路由和校验智能体共用一组 OpenAI 兼容模型连接。复制 `backend/.env.example` 为 `backend/.env` 后，填写有效的公共地址、Key 和模型。
 
 ```env
-VLLM_BASE_URL=https://llm-bln22h7lns8wvuub.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-VLLM_API_KEY=你的_api_key
-VLLM_MODEL=qwen3.8-27b
-VLLM_MAX_RETRIES=3
-VLLM_RETRY_BACKOFF_SECONDS=2
-SKILL4RE_BACKEND=vllm
-SKILL4RE_MODEL=qwen3.8-27b
-VLLM_ENABLE_THINKING=false
+LLM_BACKEND=vllm
+LLM_BASE_URL=https://llm-bln22h7lns8wvuub.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+LLM_API_KEY=你的_api_key
+LLM_MODEL=qwen3.8-27b
+LLM_REQUEST_TIMEOUT_SECONDS=180
+LLM_ENABLE_THINKING=false
+LLM_MAX_RETRIES=3
+LLM_RETRY_BACKOFF_SECONDS=2
 ```
 
-`VLLM_BASE_URL` 既可以填写完整的 `/v1/chat/completions` 地址，也可以填写去掉 `/chat/completions` 后的 `/v1` base URL；后端会在请求关系抽取时自动规整。
+`LLM_BASE_URL` 支持 `/v1` 地址或完整 `/v1/chat/completions` 地址。`LLM_BACKEND` 支持 `vllm`、`qwen_api`、`openai`、`api`，选择相应的请求参数形式；三个阶段均使用公共地址、Key 和模型。百炼部署可设置 `LLM_BACKEND=qwen_api`，`RELATION_BATCH_CONCURRENCY=4`。
 
-使用 `SKILL4RE_BACKEND=qwen_api` 时，密钥来自 `DASHSCOPE_API_KEY`，自定义部署地址请设置 `SKILL4RE_BASE_URL`；SDK 和 requests 两条调用路径均遵循这个地址。示例默认使用 `vllm` 适配器调用兼容 API，密钥来自 `VLLM_API_KEY`。切到百炼部署时建议设置 `RELATION_BATCH_CONCURRENCY=4`，遇到限流再调低。
+`LLM_REQUEST_TIMEOUT_SECONDS` 限制单次请求；`VERIFICATION_AGENT_TIMEOUT_SECONDS` 限制整篇文档的校验总时长，校验请求同时受两个时限约束。`LLM_MAX_RETRIES=3` 表示最多尝试三次，包含首次请求；requests 重试等待按 `LLM_RETRY_BACKOFF_SECONDS × 当前尝试次数` 递增，SDK 使用其内置退避，校验限流采用指数退避并计入调用预算。
+
+顶部模型设置编辑公共地址、Key 和模型，保存值优先于环境变量默认值。Key 留空保留现有值，模型名称留空恢复 `LLM_MODEL`。已有 `STORAGE_ROOT/settings/model.json` 可以继续使用。每篇文档在 Worker 开始处理、执行 OCR 之前读取一次配置；路由、全部 batch、校验规划和工具循环使用该快照。排队期间保存设置，文档开始处理时使用新配置；OCR、抽取或校验期间保存设置，进行中的文档继续使用原配置，后续开始处理的文档使用新配置。通过前端保存无需重启，修改部署环境中的 backend 或运行限制需要重启相应进程。
+
+### 配置名称迁移
+
+部署配置使用公共连接字段及 `VERIFICATION_AGENT_*` 运行字段。更新名称后删除对应的旧字段，后端会对停用名称报告迁移错误。
+
+| 配置来源 | 公共配置名称 |
+| --- | --- |
+| `SKILL4RE_BACKEND` | `LLM_BACKEND` |
+| `VLLM_BASE_URL`、`SKILL4RE_BASE_URL`、`AGENT_BASE_URL` | `LLM_BASE_URL` |
+| 当前服务使用的 Key：`VLLM_API_KEY`、`DASHSCOPE_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`AGENT_API_KEY` | `LLM_API_KEY` |
+| `VLLM_MODEL`、`SKILL4RE_MODEL`、`AGENT_MODEL` | `LLM_MODEL` |
+| `VLLM_TIMEOUT_SECONDS` | `LLM_REQUEST_TIMEOUT_SECONDS` |
+| `VLLM_ENABLE_THINKING` | `LLM_ENABLE_THINKING` |
+| `VLLM_MAX_RETRIES`、`SKILL4RE_API_MAX_RETRIES` | `LLM_MAX_RETRIES` |
+| `VLLM_RETRY_BACKOFF_SECONDS`、`SKILL4RE_API_RETRY_BACKOFF_SECONDS` | `LLM_RETRY_BACKOFF_SECONDS` |
+| 校验运行参数 `AGENT_*` | 对应的 `VERIFICATION_AGENT_*` |
+
+服务商通用 Key 环境变量可以供其他程序使用，ICCT-RE 的连接认证统一读取 `LLM_API_KEY`。
 
 ## 可选：启动本地 vLLM
 
@@ -137,7 +157,7 @@ vllm serve Qwen/Qwen3.5-27b \
 curl http://127.0.0.1:8000/v1/models -H "Authorization: Bearer EMPTY"
 ```
 
-显存不足时可更换更小模型，并同步修改 `backend/.env` 的 `VLLM_MODEL` 和 `SKILL4RE_MODEL`。
+显存不足时可更换更小模型，并修改 `backend/.env` 的 `LLM_MODEL`。
 
 ## 启动 ICCT-RE
 
@@ -190,29 +210,23 @@ curl http://127.0.0.1:5000/api/health
 
 ## 文档核查 agent
 
-核查默认关闭（`AGENT_ENABLED=false`）。启用时修改 `backend/.env`，填写独立的 `AGENT_API_KEY`，然后重启 worker：
+校验默认关闭。公共模型配置就绪后，修改 `backend/.env` 并重启 Worker：
 
 ```dotenv
-AGENT_ENABLED=true
-AGENT_BASE_URL=https://llm-bln22h7lns8wvuub.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
-AGENT_API_KEY=your_bailian_api_key
-AGENT_MODEL=qwen3.8-27b
+VERIFICATION_AGENT_ENABLED=true
 ```
 
-核查使用独立密钥配置，不会自动读取抽取阶段的密钥。即使两个阶段使用同一部署，也须分别配置。模型调用显式关闭思考，执行记录包含任务规划、请求和工具调用的状态、参数、原文依据及任务结论。
+校验使用该文档的公共模型快照，模型需支持 tool calling。校验请求按 backend 显式关闭 thinking，执行记录包含任务规划、请求和工具调用的状态、参数、原文依据及任务结论。上传任务的 `fast_mode` 控制是否执行校验，环境开关提供默认值。
 
 | 配置项 | 默认值 | 含义 |
 | --- | --- | --- |
-| `AGENT_ENABLED` | `false` | 是否运行核查 |
-| `AGENT_BASE_URL` | 上述北京百炼地址 | OpenAI 兼容地址，可带 `/chat/completions` 后缀 |
-| `AGENT_API_KEY` | 空 | 独立核查密钥 |
-| `AGENT_MODEL` | `qwen3.8-27b` | 核查模型 |
-| `AGENT_CONCURRENCY` | `1` | 首版串行执行，设大于 1 会收敛为 1 |
-| `AGENT_MAX_TASKS` | `20` | 每篇最多规划的任务数 |
-| `AGENT_MAX_STEPS` | `6` | 单任务 LangGraph 图节点执行上限，包含模型和工具节点 |
-| `AGENT_MAX_LLM_CALLS` | `80` | 每篇模型请求预算，限流重试计入 |
-| `AGENT_TIMEOUT_SECONDS` | `600` | 核查阶段总时限，单位秒 |
-| `AGENT_MAX_ADDED_PER_TASK` | `5` | 单任务补充关系上限 |
+| `VERIFICATION_AGENT_ENABLED` | `false` | 是否运行校验 |
+| `VERIFICATION_AGENT_CONCURRENCY` | `1` | 校验任务串行执行，设置大于 1 时按 1 执行 |
+| `VERIFICATION_AGENT_MAX_TASKS` | `20` | 每篇最多规划的任务数 |
+| `VERIFICATION_AGENT_MAX_STEPS` | `6` | 单任务 LangGraph 节点执行上限，包含模型和工具节点 |
+| `VERIFICATION_AGENT_MAX_LLM_CALLS` | `80` | 每篇模型请求预算，限流重试计入 |
+| `VERIFICATION_AGENT_TIMEOUT_SECONDS` | `600` | 校验阶段总时限，单位秒 |
+| `VERIFICATION_AGENT_MAX_ADDED_PER_TASK` | `5` | 单任务补充关系上限 |
 
 核查期间任务状态为 `verifying`，任务详情标题下方展示智能体过程，结束后仍然可以查看。左侧列出任务，右侧显示执行时间线，包含以下四类信息：
 
@@ -223,7 +237,7 @@ AGENT_MODEL=qwen3.8-27b
 
 过程自动跟随当前任务。选择历史任务、滚动时间线或使用键盘阅读后暂停跟随，点击“跟随当前任务”恢复。展开状态按文档保留；“折叠过程”可以增加结果区域的空间。任务刷新后从首条事件恢复，切换任务时取消此前的读取请求。事件读取和详情读取失败分别提示，可以重新读取，已经读取的内容继续保留。
 
-阶段失败时保留核查前的抽取结果，文档任务仍可成功；部分完成只保留已生效的合法改动。核查状态与文档处理状态分别展示。关闭核查时设置 `AGENT_ENABLED=false` 并重启 Worker。
+阶段失败时保留核查前的抽取结果，文档任务仍可成功；部分完成只保留已生效的合法改动。核查状态与文档处理状态分别展示。关闭校验时设置 `VERIFICATION_AGENT_ENABLED=false` 并重启 Worker。
 
 ### 执行事件查询
 
@@ -242,10 +256,12 @@ Redis 按文档保存事件摘要 List、详情 Hash 和元数据 Hash，同一�
 
 ### 真实数据与服务检查
 
+`tools/verification/` 保存开发使用的检查、重放和评估工具，以下命令从仓库根目录执行。
+
 下面的检查连接已配置的真实 Redis，创建独立的 `agent-event-check-*` 任务，使用已有结果中的原文执行工具，检查并发序号、完整详情、拒绝、未命中、分页和 HTTP 状态。`--history-result` 可指定已保存的旧核查结果，检查材料保存到 `--output-dir`：
 
 ```bash
-STORAGE_ROOT="$PWD/data" backend/.venv/bin/python scripts/check-agent-execution-events.py \
+STORAGE_ROOT="$PWD/data" backend/.venv/bin/python tools/verification/check-agent-execution-events.py \
   data/results/<task_id>/result.json \
   --history-result data/agent_replays/<run>/<task_id>/result.json \
   --output-dir .impeccable/checks/agent-events
@@ -253,29 +269,38 @@ STORAGE_ROOT="$PWD/data" backend/.venv/bin/python scripts/check-agent-execution-
 
 增加 `--live --max-calls 24` 会将输入原文发送到配置的真实核查模型，并保存核查结果与阶段结束事件；设置 `--max-calls 1` 可以检查预算受限状态。执行前须确认原文允许发送到该模型服务。
 
+使用已保存文档和真实小节查询工具检查公共模型的 tool calling：
+
+```bash
+backend/.venv/bin/python tools/verification/probe-agent-connection.py \
+  data/results/<task_id>/result.json
+```
+
 只重放已保存的结果，无需 OCR、Redis 或前端，输出目录必须与输入目录独立：
 
 ```bash
-backend/.venv/bin/python scripts/replay-agent-verification.py \
+backend/.venv/bin/python tools/verification/replay-agent-verification.py \
   data/results/<task_id>/result.json \
   --output-dir data/agent_replays/my-run
 ```
 
 输出包含 `result.json`、`metrics.json`、`changes.csv` 和多文档 `evaluation.json`。可以用 `--annotations annotations.json` 提供标注；单篇为关系列表，多篇为 task_id 到关系列表的映射。精确率、召回率和 F1 按规范化后的头实体、关系、尾实体严格匹配，关系词同义表达不会自动等同。无标注时明确跳过这些指标。
 
+连接检查、重放和评估脚本支持 `--env-file` 指定公共配置文件。连接检查及重放的 `--base-url`、`--model` 仅覆盖本次独立运行的公共配置，前端保存的设置文件保持原样。
+
 在 `changes.csv` 的 `judgment` 列填写 `正确` 或 `错误` 后，可以重新计算整体和分类型改动正确率：
 
 ```bash
-backend/.venv/bin/python scripts/replay-agent-verification.py \
+backend/.venv/bin/python tools/verification/replay-agent-verification.py \
   --judgments-csv data/agent_replays/my-run/<task_id>/changes.csv
 ```
 
-本次五领域材料与评估可通过以下脚本复现。第二个命令会实际调用本地 OCR 和远程模型，需要先配置有效的抽取及核查密钥；它会复用已有输出，重新运行请选择新输出目录。
+本次五领域材料与评估可通过以下脚本复现。第二个命令会实际调用 Redis、OCR 和公共模型服务，需要配置有效的公共连接；它会复用已有输出，重新运行请选择新输出目录。
 
 ```bash
-backend/.venv/bin/python scripts/generate-agent-evaluation-documents.py \
+backend/.venv/bin/python tools/verification/generate-agent-evaluation-documents.py \
   --output-dir data/agent_evaluation/my-run/documents
-backend/.venv/bin/python scripts/run-agent-document-evaluation.py \
+backend/.venv/bin/python tools/verification/run-agent-document-evaluation.py \
   --documents-dir data/agent_evaluation/my-run/documents \
   --output-dir data/agent_evaluation/my-run
 ```

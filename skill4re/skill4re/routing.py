@@ -5,10 +5,7 @@ import math
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
+from openai import OpenAI
 
 from skill4re.backends import ROUTER_RESPONSE_FORMAT, LocalQwenGenerator, generate_text, generate_text_with_requests
 from skill4re.models import Skill
@@ -191,6 +188,8 @@ def route_with_llm(
     stream_id: str = "",
     stream_thinking: bool = False,
     thinking_budget: int = 0,
+    max_retries: int = 3,
+    retry_backoff_seconds: float = 2.0,
 ) -> Dict:
     prompt = build_router_prompt(text[:3000], scores, skills)
     if client is not None or local_generator is not None:
@@ -217,6 +216,8 @@ def route_with_llm(
             response_format=ROUTER_RESPONSE_FORMAT,
             base_url=base_url,
             timeout=request_timeout,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
             enable_thinking=enable_thinking,
             on_delta=on_delta,
             stream_id=stream_id,
@@ -259,6 +260,8 @@ def route_document(
     stream_id: str = "",
     stream_thinking: bool = False,
     thinking_budget: int = 0,
+    max_retries: int = 3,
+    retry_backoff_seconds: float = 2.0,
 ) -> Dict:
     scores = keyword_scores(text, skills)
     cache_key = doc_hash(text)
@@ -297,6 +300,8 @@ def route_document(
                 api_key=api_key,
                 base_url=base_url,
                 request_timeout=request_timeout,
+                max_retries=max_retries,
+                retry_backoff_seconds=retry_backoff_seconds,
                 enable_thinking=enable_thinking,
                 on_delta=on_delta,
                 stream_id=stream_id,

@@ -3,8 +3,8 @@ from __future__ import annotations
 import requests
 from typing import Any
 
-from .config import AppConfig, normalize_openai_base_url
-from .model_settings import ModelSettings, ModelSettingsStore, main_model_settings_defaults
+from .config import AppConfig
+from .model_settings import LlmRequestSettings, ModelSettingsStore, resolve_model_settings
 from .utils import extract_json_array
 
 
@@ -33,7 +33,7 @@ class VllmClient:
                 f"{settings.base_url}/models", timeout=5, headers=self._headers(settings)
             )
             if response.ok:
-                if getattr(self.config, "skill4re_backend", "vllm") == "qwen_api":
+                if settings.backend == "qwen_api":
                     return self._chat_completion_healthcheck(settings)
                 return True
             if response.status_code not in {404, 405}:
@@ -42,7 +42,7 @@ class VllmClient:
         except requests.RequestException:
             return False
 
-    def _chat_completion_healthcheck(self, settings: ModelSettings | None = None) -> bool:
+    def _chat_completion_healthcheck(self, settings: LlmRequestSettings | None = None) -> bool:
         settings = settings or self._settings()
         payload = {
             "model": settings.model,
@@ -50,14 +50,14 @@ class VllmClient:
             "temperature": 0,
             "max_tokens": 1,
             "stream": False,
-            **self._thinking_options(),
+            **settings.thinking_options(settings.enable_thinking),
         }
         try:
             response = self.session.post(
                 f"{settings.base_url}/chat/completions",
                 json=payload,
                 headers=self._headers(settings),
-                timeout=min(10, self.config.vllm_timeout_seconds),
+                timeout=min(10, settings.request_timeout_seconds),
             )
             return response.ok
         except requests.RequestException:
@@ -79,14 +79,14 @@ class VllmClient:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0,
-            **self._thinking_options(),
+            **settings.thinking_options(settings.enable_thinking),
         }
         try:
             response = self.session.post(
                 f"{settings.base_url}/chat/completions",
                 json=payload,
                 headers=self._headers(settings),
-                timeout=self.config.vllm_timeout_seconds,
+                timeout=settings.request_timeout_seconds,
             )
             response.raise_for_status()
             data = response.json()
@@ -101,7 +101,7 @@ class VllmClient:
             raise VllmClientError("vLLM returned an unexpected response shape") from exc
         return extract_json_array(content if isinstance(content, str) else "")
 
-    def _headers(self, settings: ModelSettings | None = None) -> dict[str, str]:
+    def _headers(self, settings: LlmRequestSettings | None = None) -> dict[str, str]:
         settings = settings or self._settings()
         headers = {"Content-Type": "application/json"}
         if settings.api_key:
@@ -109,27 +109,11 @@ class VllmClient:
         return headers
 
     def _thinking_options(self) -> dict[str, Any]:
-        if getattr(self.config, "skill4re_backend", "vllm") == "qwen_api":
-            return {"enable_thinking": self.config.vllm_enable_thinking}
-        return {"chat_template_kwargs": {"enable_thinking": self.config.vllm_enable_thinking}}
+        settings = self._settings()
+        return settings.thinking_options(settings.enable_thinking)
 
     def _base_url(self) -> str:
         return self._settings().base_url
 
-    def _settings(self) -> ModelSettings:
-        defaults = main_model_settings_defaults(self.config)
-        if defaults is not None:
-            if self.settings_store is not None:
-                return self.settings_store.get(*defaults)
-            return ModelSettings(
-                normalize_openai_base_url(defaults[0]),
-                defaults[1],
-                defaults[2],
-                defaults[2],
-            )
-        return ModelSettings(
-            normalize_openai_base_url(self.config.vllm_base_url),
-            self.config.vllm_api_key,
-            self.config.vllm_model,
-            self.config.vllm_model,
-        )
+    def _settings(self) -> LlmRequestSettings:
+        return resolve_model_settings(self.config, self.settings_store)

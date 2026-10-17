@@ -7,7 +7,7 @@
 ## 材料与执行配置
 
 - 技术运维说明、企业投资公告、设备采购合同、医学研究纪要、模拟训练协同方案各一篇，均为单页中文 PDF，原文长度 227–281 字符。机构、人物和事实由助手构造，不来自真实业务材料。
-- `scripts/generate-agent-evaluation-documents.py` 先生成 Markdown、PNG、PDF 和每篇八条正向事实标注，再运行模型。全部生成材料在 `data/agent_evaluation/20261009_five_domains/documents/`。原文与材料 SHA256 见 `manifest.json` 和 `run-details.json`。
+- `tools/verification/generate-agent-evaluation-documents.py` 先生成 Markdown、PNG、PDF 和每篇八条正向事实标注，再运行模型。全部生成材料在 `data/agent_evaluation/20261009_five_domains/documents/`。原文与材料 SHA256 见 `manifest.json` 和 `run-details.json`。
 - 使用用户已启动的 `http://127.0.0.1:8118/v1` PaddleOCR-VL-1.6-0.9B 服务；后端 Python 客户端完成版面解析与重排。五篇均解析出一页，OCR 文本保留了正文事实、数字、章节、别名、否定与条件句。没有触发 OCR HTTP 拆分备选方案。
 - 抽取通过现有 `vllm` requests 适配器调用指定百炼部署，模型 `qwen3.8-27b`，小节模式，batch 并发 4。核查通过独立 LangGraph 适配器调用相同模型和地址，显式 `enable_thinking=false`，串行、最多 20 任务、每任务 6 个图节点、80 次调用、600 秒。未扩大预算以改善本次结果。
 - 地址为 `https://llm-bln22h7lns8wvuub.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`。仅在评估进程中使用已有百炼密钥配置抽取及核查，密钥不写入报告或结果。默认值和本地 `.env` 的模型、地址已按用户要求更新。
@@ -82,4 +82,4 @@ OCR 和抽取的成功保存结果耗时依次为 33.6117、8.5707、11.7825、1
 - `input_integrity.json`：五份输入的 SHA256 和修改时间在重放前后均一致。
 - `progress/`、`run.log`：阶段及核查进展、执行日志；日志含前述失败尝试。
 
-生成与运行命令见 README，判定回读命令为 `scripts/replay-agent-verification.py --judgments-csv <各篇 changes.reviewed.csv>`。本轮回读得到上述 5/6、5/5、0/1，未改输入结果。
+生成与运行命令见 README，判定回读命令为 `tools/verification/replay-agent-verification.py --judgments-csv <各篇 changes.reviewed.csv>`。本轮回读得到上述 5/6、5/5、0/1，未改输入结果。

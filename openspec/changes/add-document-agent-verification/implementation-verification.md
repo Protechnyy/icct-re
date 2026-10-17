@@ -15,21 +15,21 @@
 
 ## 重放入口
 
-`scripts/replay-agent-verification.py` 只运行核查，不启动 OCR 或 Redis。独立模型配置来自 `AGENT_BASE_URL`、`AGENT_API_KEY`、`AGENT_MODEL`。默认开启核查只限于本次重放，不写 `.env`。
+`tools/verification/replay-agent-verification.py` 只运行核查，不启动 OCR 或 Redis。独立模型配置来自 `AGENT_BASE_URL`、`AGENT_API_KEY`、`AGENT_MODEL`。默认开启核查只限于本次重放，不写 `.env`。
 
 ```bash
-backend/.venv/bin/python scripts/replay-agent-verification.py \
+backend/.venv/bin/python tools/verification/replay-agent-verification.py \
   <已保存结果/result.json> --output-dir <独立输出目录>
 
 # 多篇结果可以同时列出；evaluation.json 包含逐文档指标和汇总。
 # 标注格式：单篇为 head/relation/tail 对象数组，多篇为 task_id 到该数组的映射。
-backend/.venv/bin/python scripts/replay-agent-verification.py \
+backend/.venv/bin/python tools/verification/replay-agent-verification.py \
   <结果1/result.json> <结果2/result.json> \
   --output-dir <独立输出目录> --annotations <标注.json>
 
 # 输出目录中每篇有 result.json、metrics.json、changes.csv。
 # judgment 列支持 正确/错误、true/false、1/0；未填行不计入正确率分母。
-backend/.venv/bin/python scripts/replay-agent-verification.py \
+backend/.venv/bin/python tools/verification/replay-agent-verification.py \
   --judgments-csv <填好判定的changes.csv>
 ```
 

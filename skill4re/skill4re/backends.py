@@ -1,13 +1,12 @@
 import json
-import os
+import logging
 import re
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
+from openai import DefaultHttpxClient, OpenAI
+
+logger = logging.getLogger(__name__)
 
 
 RELATION_LIST_RESPONSE_FORMAT: Dict = {
@@ -115,40 +114,25 @@ def build_backend(
     backend: str,
     api_key: str,
     model_path: str,
+    base_url: Optional[str] = None,
+    timeout: int = 120,
+    max_retries: int = 3,
 ) -> Tuple[Optional[OpenAI], Optional[LocalQwenGenerator]]:
     client = None
     local_generator = None
-    if backend == "openai":
-        if OpenAI is None:
-            raise ImportError("openai module is required for openai backend")
-        import httpx
+    if backend in {"openai", "api", "qwen_api"}:
+        default_urls = {"openai": "https://api.openai.com/v1", "api": "https://api.deepseek.com",
+                        "qwen_api": "https://dashscope.aliyuncs.com/compatible-mode/v1"}
         client = OpenAI(
-            api_key=api_key,
-            http_client=httpx.Client(trust_env=False, timeout=120.0),
-        )
-    elif backend == "api":
-        if OpenAI is None:
-            raise ImportError("openai module is required for api backend")
-        import httpx
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.deepseek.com",
-            http_client=httpx.Client(trust_env=False, timeout=120.0),
-        )
-    elif backend == "qwen_api":
-        if OpenAI is None:
-            raise ImportError("openai module is required for qwen_api backend")
-        import httpx
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-            http_client=httpx.Client(trust_env=False, timeout=120.0),
+            api_key=lambda: api_key,
+            base_url=normalize_openai_base_url(base_url or default_urls[backend]),
+            timeout=timeout, max_retries=max_retries - 1,
+            http_client=DefaultHttpxClient(trust_env=False, timeout=timeout),
         )
     elif backend == "local_qwen3":
         local_generator = LocalQwenGenerator(model_path)
     elif backend == "vllm":
-        # vLLM is called through the requests fallback so it does not require
-        # the OpenAI SDK in the backend runtime.
+        # vLLM 使用 requests 发送兼容接口请求。
         pass
     else:
         raise ValueError(f"Unsupported backend: {backend}")
@@ -161,20 +145,6 @@ def normalize_openai_base_url(base_url: str) -> str:
     if resolved.endswith(suffix):
         return resolved[: -len(suffix)].rstrip("/")
     return resolved
-
-
-def _env_int(name: str, default: int, minimum: int = 1) -> int:
-    try:
-        return max(minimum, int(os.getenv(name, str(default)).strip()))
-    except (AttributeError, ValueError):
-        return default
-
-
-def _env_float(name: str, default: float, minimum: float = 0.0) -> float:
-    try:
-        return max(minimum, float(os.getenv(name, str(default)).strip()))
-    except (AttributeError, ValueError):
-        return default
 
 
 def _compact_response_text(text: str, limit: int = 500) -> str:
@@ -246,6 +216,8 @@ def generate_text(
             request_kwargs["extra_body"] = extra_body
         if response_format is not None and backend in {"openai", "qwen_api"}:
             request_kwargs["response_format"] = response_format
+        logger.info("LLM request backend=%s model=%s base_url=%s stream_id=%s",
+                    backend, model, api_client.base_url, stream_id)
         if stream_requested:
             content_parts: List[str] = []
             stream = api_client.chat.completions.create(**request_kwargs)
@@ -310,6 +282,8 @@ def generate_text_with_requests(
     stream_id: str = "",
     stream_thinking: bool = False,
     thinking_budget: int = 0,
+    max_retries: int = 3,
+    retry_backoff_seconds: float = 2.0,
 ) -> str:
     import requests
 
@@ -328,10 +302,9 @@ def generate_text_with_requests(
     else:
         raise ValueError(f"Unsupported backend: {backend}")
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     data = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -356,12 +329,9 @@ def generate_text_with_requests(
     if response_format is not None and backend in {"openai", "qwen_api"}:
         data["response_format"] = response_format
 
-    max_retries = _env_int("VLLM_MAX_RETRIES", _env_int("SKILL4RE_API_MAX_RETRIES", 3))
-    retry_backoff_seconds = _env_float(
-        "VLLM_RETRY_BACKOFF_SECONDS",
-        _env_float("SKILL4RE_API_RETRY_BACKOFF_SECONDS", 2.0),
-    )
     url = f"{resolved_base_url}/chat/completions"
+    logger.info("LLM request backend=%s model=%s base_url=%s stream_id=%s",
+                backend, model, resolved_base_url, stream_id)
     for attempt in range(1, max_retries + 1):
         try:
             response = requests.post(

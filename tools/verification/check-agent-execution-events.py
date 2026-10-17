@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 from uuid import uuid4
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 
 from app.agent import verify_document
 from app.agent.document import DocumentIndex
@@ -66,8 +66,9 @@ def main():
     agent = None
     if args.live:
         after, agent = verify_document(relations, payload["relation_sections"], payload["document_text"],
-                                      replace(config, agent_enabled=True, agent_max_tasks=3,
-                                              agent_max_steps=12, agent_max_llm_calls=args.max_calls), trace=trace)
+                                      replace(config, verification_agent_enabled=True, verification_agent_max_tasks=3,
+                                              verification_agent_max_steps=12,
+                                              verification_agent_max_llm_calls=args.max_calls), trace=trace)
         trace.finish(agent)
         starts = sorted(event["call_id"] for event in trace.events if event["kind"] in ("model_start", "tool_start"))
         ends = sorted(event["call_id"] for event in trace.events if event["kind"] in ("model_end", "tool" ) and event.get("call_id"))

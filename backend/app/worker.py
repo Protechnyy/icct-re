@@ -10,12 +10,12 @@ from .pipeline import bootstrap_pipeline
 LOGGER = logging.getLogger(__name__)
 
 
-def run_worker() -> None:
+def run_worker(config: AppConfig | None = None) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
-    config = AppConfig.from_env()
+    config = config if config is not None else AppConfig.from_env()
     config.ensure_storage_dirs()
     pipeline = bootstrap_pipeline(config)
     task_store = pipeline.task_store

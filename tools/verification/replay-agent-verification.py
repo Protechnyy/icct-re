@@ -1,18 +1,16 @@
-#!/usr/bin/env python3
-"""Replay only document verification; no OCR or task queue is started."""
 import argparse
-from dataclasses import replace
 import json
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from app.config import AppConfig, normalize_openai_base_url
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
+from app.config import AppConfig
 from app.agent.evaluation import aggregate_metrics, replay_file, score_judgments
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="使用公共模型配置重放文档校验")
+    parser.add_argument("--env-file", type=Path)
     parser.add_argument("inputs", nargs="*", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--base-url")
@@ -25,13 +23,7 @@ def main():
         return 0
     if not args.inputs or args.output_dir is None:
         parser.error("Provide result.json input(s) and --output-dir, or --judgments-csv.")
-    config = AppConfig.from_env()
-    if args.base_url:
-        config = replace(config, agent_base_url=normalize_openai_base_url(args.base_url))
-    if args.model:
-        config = replace(config, agent_model=args.model)
-    if not config.agent_api_key:
-        parser.error("Configure AGENT_API_KEY for the independent verification model.")
+    config = AppConfig.from_env(args.env_file)
     annotations = json.loads(args.annotations.read_text()) if args.annotations else None
     if isinstance(annotations, list) and len(args.inputs) != 1:
         parser.error("Multiple inputs require annotations indexed by task_id.")
@@ -51,7 +43,8 @@ def main():
             last_sequence[0] = event["seq"]
             if event["kind"] in ("plan", "task_end"):
                 print(f"{source.parent.name}: {progress['completed_tasks']}/{progress['total_tasks']} {event['kind']}", flush=True)
-        report = replay_file(source, args.output_dir, config, annotations=gold, progress_callback=report_progress)
+        report = replay_file(source, args.output_dir, config, annotations=gold, progress_callback=report_progress,
+                             base_url=args.base_url, model_name=args.model)
         reports.append(report)
         print(json.dumps(report, ensure_ascii=False), flush=True)
     summary = {"documents": reports, "aggregate": aggregate_metrics(reports)}

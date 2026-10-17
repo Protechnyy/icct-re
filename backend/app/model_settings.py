@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from .config import normalize_openai_base_url
-
-DEFAULT_QWEN_API_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
 class ModelSettingsError(ValueError):
@@ -20,13 +19,61 @@ class ModelSettingsError(ValueError):
 @dataclass(frozen=True)
 class ModelSettings:
     base_url: str
-    api_key: str
+    api_key: str = field(repr=False)
     model: str = ""
     default_model: str = ""
 
     @property
     def api_key_configured(self) -> bool:
         return bool(self.api_key.strip())
+
+
+@dataclass(frozen=True)
+class LlmRequestSettings:
+    backend: str
+    base_url: str
+    api_key: str = field(repr=False)
+    model: str
+    request_timeout_seconds: int
+    enable_thinking: bool
+    max_retries: int
+    retry_backoff_seconds: float
+
+    def __post_init__(self) -> None:
+        if self.backend not in {"vllm", "qwen_api", "openai", "api", "local_qwen3"}:
+            raise ModelSettingsError("LLM_BACKEND 不受支持")
+        if self.backend != "local_qwen3":
+            object.__setattr__(self, "base_url", _validated_base_url(self.base_url))
+        if not self.model.strip():
+            raise ModelSettingsError("LLM_MODEL 不能为空")
+        if self.request_timeout_seconds <= 0 or self.max_retries < 1:
+            raise ModelSettingsError("请求超时及最大尝试次数必须是正数")
+        if not math.isfinite(self.retry_backoff_seconds) or self.retry_backoff_seconds < 0:
+            raise ModelSettingsError("重试等待时间必须是有限的非负数")
+
+    def thinking_options(self, enabled: bool) -> dict[str, Any]:
+        if self.backend == "qwen_api":
+            return {"enable_thinking": enabled}
+        if self.backend == "vllm":
+            return {"chat_template_kwargs": {"enable_thinking": enabled}}
+        return {}
+
+    def public_summary(self) -> dict[str, Any]:
+        return {"backend": self.backend, "base_url": self.base_url, "model": self.model}
+
+
+def resolve_model_settings(config: Any, store: ModelSettingsStore | None = None) -> LlmRequestSettings:
+    defaults = main_model_settings_defaults(config)
+    if defaults is None:
+        settings = ModelSettings("", "", config.llm_model)
+    else:
+        settings = (store or ModelSettingsStore(config.storage_root)).get(*defaults)
+    return LlmRequestSettings(
+        backend=config.llm_backend, base_url=settings.base_url, api_key=settings.api_key,
+        model=settings.model, request_timeout_seconds=config.llm_request_timeout_seconds,
+        enable_thinking=config.llm_enable_thinking, max_retries=config.llm_max_retries,
+        retry_backoff_seconds=config.llm_retry_backoff_seconds,
+    )
 
 
 class ModelSettingsStore:
@@ -120,29 +167,9 @@ class ModelSettingsStore:
 
 
 def main_model_settings_defaults(config: Any) -> tuple[str, str, str] | None:
-    backend = getattr(config, "skill4re_backend", "vllm")
-    default_model = getattr(config, "skill4re_model", getattr(config, "vllm_model", ""))
-    if backend == "vllm":
-        return config.vllm_base_url, config.vllm_api_key, default_model
-    if backend == "qwen_api":
-        return (
-            os.getenv("SKILL4RE_BASE_URL") or DEFAULT_QWEN_API_BASE_URL,
-            os.getenv("DASHSCOPE_API_KEY", ""),
-            default_model,
-        )
-    if backend == "openai":
-        return (
-            os.getenv("SKILL4RE_BASE_URL") or "https://api.openai.com/v1",
-            os.getenv("OPENAI_API_KEY", ""),
-            default_model,
-        )
-    if backend == "api":
-        return (
-            os.getenv("SKILL4RE_BASE_URL") or "https://api.deepseek.com",
-            os.getenv("DEEPSEEK_API_KEY", ""),
-            default_model,
-        )
-    return None
+    if config.llm_backend == "local_qwen3":
+        return None
+    return config.llm_base_url, config.llm_api_key, config.llm_model
 
 
 def _validated_base_url(value: str) -> str:

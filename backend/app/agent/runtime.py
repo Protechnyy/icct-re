@@ -108,19 +108,25 @@ class VerificationState(TypedDict, total=False):
     result: dict
 
 
-def run_verification(relations, sections, document_text, config, progress_callback=None, model=None, *, trace=None):
+def run_verification(relations, sections, document_text, config, progress_callback=None, model=None, *, trace=None,
+                     settings=None):
+    from ..model_settings import resolve_model_settings
+
+    settings = settings if settings is not None else resolve_model_settings(config)
     original = deepcopy(relations)
     trace = trace if trace is not None else Trace(progress_callback)
-    budget = Budget(config.agent_max_llm_calls, config.agent_timeout_seconds, trace=trace)
-    workspace = RelationWorkspace(relations, DocumentIndex(sections, document_text), config.agent_max_added_per_task)
-    if config.agent_concurrency > 1:
-        LOGGER.warning("AGENT_CONCURRENCY=%s is clamped to 1; verification tasks execute serially", config.agent_concurrency)
+    budget = Budget(config.verification_agent_max_llm_calls, config.verification_agent_timeout_seconds, trace=trace,
+                    request_timeout_seconds=settings.request_timeout_seconds,
+                    max_attempts=settings.max_retries, retry_backoff_seconds=settings.retry_backoff_seconds)
+    workspace = RelationWorkspace(relations, DocumentIndex(sections, document_text), config.verification_agent_max_added_per_task)
+    if config.verification_agent_concurrency > 1:
+        LOGGER.warning("VERIFICATION_AGENT_CONCURRENCY=%s is clamped to 1; verification tasks execute serially",
+                       config.verification_agent_concurrency)
     if model is None:
-        if not config.agent_api_key:
-            raise ValueError("AGENT_API_KEY 未配置")
-        model = ChatOpenAI(model=config.agent_model, api_key=config.agent_api_key,
-            base_url=config.agent_base_url, timeout=config.agent_timeout_seconds, max_retries=0,
-            extra_body={"enable_thinking": False}, callbacks=[],
+        LOGGER.info("Verification model configuration: %s", settings.public_summary())
+        model = ChatOpenAI(model=settings.model, api_key=lambda: settings.api_key,
+            base_url=settings.base_url, timeout=settings.request_timeout_seconds, max_retries=0,
+            extra_body=settings.thinking_options(False), callbacks=[],
             max_tokens=2048)
     planning_model = model.bind(max_tokens=65536)
     counted_model = BudgetedModel(inner=model, budget=budget)
@@ -131,7 +137,7 @@ def run_verification(relations, sections, document_text, config, progress_callba
         def call(prompt):
             response = budget.invoke(planning_model, [("system", "只输出核查任务清单 JSON，不输出思考过程。"), ("user", prompt)])
             return response.content
-        tasks, metadata = plan_tasks(call, workspace.relations, sections, document_text, config.agent_max_tasks)
+        tasks, metadata = plan_tasks(call, workspace.relations, sections, document_text, config.verification_agent_max_tasks)
         trace.tasks = tasks
         trace.emit("plan", result={"tasks": tasks, "planning": metadata}, elapsed_seconds=time.monotonic() - started)
         return {"tasks": tasks, "cursor": 0, "planning": metadata, "stopped": ""}
@@ -164,7 +170,7 @@ def run_verification(relations, sections, document_text, config, progress_callba
             last_answer = None
             tool_calls = {}
             for update in loop.stream({"messages": [("user", "请核查这个任务并给出结论。") ]},
-                                      {"recursion_limit": config.agent_max_steps}, stream_mode="updates"):
+                                      {"recursion_limit": config.verification_agent_max_steps}, stream_mode="updates"):
                 for payload in update.values():
                     for message in payload.get("messages", []):
                         if isinstance(message, AIMessage):
@@ -255,7 +261,7 @@ def run_verification(relations, sections, document_text, config, progress_callba
     try:
         state = graph.compile().invoke({"workspace": workspace, "trace": trace, "budget": budget,
             "memory": {"entity_aliases": workspace.entity_aliases, "conclusions": workspace.conclusions}},
-            {"recursion_limit": config.agent_max_tasks + 4})
+            {"recursion_limit": config.verification_agent_max_tasks + 4})
     except Exception as exc:
         reason = "核查阶段失败：" + type(exc).__name__
         for task in trace.tasks:

@@ -3,17 +3,22 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from threading import Lock
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
-from .config import AppConfig, normalize_openai_base_url
-from .model_settings import ModelSettings, ModelSettingsStore, main_model_settings_defaults
+from .config import AppConfig
+from .model_settings import LlmRequestSettings
 
 LOGGER = logging.getLogger(__name__)
 
 
 class RelationExtractor(Protocol):
+    def for_document(self, settings: LlmRequestSettings) -> "RelationExtractor":
+        ...
+
+    def close(self) -> None:
+        ...
+
     def extract_document(
         self,
         document_text: str,
@@ -30,80 +35,65 @@ class Skill4ReClientError(RuntimeError):
 
 
 class Skill4ReClient:
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, config: AppConfig, settings: LlmRequestSettings | None = None) -> None:
         self.config = config
-        self.model_settings_store = ModelSettingsStore(config.storage_root)
-        self._reload_lock = Lock()
+        self.settings = settings
         self._ensure_import_path()
 
-        try:
-            from skill4re.backends import build_backend
-            from skill4re.loader import load_skills
-            from skill4re.routing import load_route_cache, save_route_cache
-            from skill4re.service import SkillRouterExtractor
-        except ImportError as exc:
-            raise Skill4ReClientError(f"Unable to import skill4re: {exc}") from exc
+        from skill4re.backends import build_backend
+        from skill4re.loader import load_skills
+        from skill4re.routing import load_route_cache, save_route_cache
+        from skill4re.service import SkillRouterExtractor
 
         self._build_backend = build_backend
         self._load_skills = load_skills
         self._load_route_cache = load_route_cache
         self._save_route_cache = save_route_cache
         self._extractor_class = SkillRouterExtractor
-        self._skills_fingerprint: tuple[tuple[str, int, int], ...] = ()
-        self._model_settings_fingerprint: tuple[int, int, int] | None = None
         self._client = None
         self._local_generator = None
         self.skills = []
         self.route_cache = {}
         self.extractor = None
-        self._reload()
+        if settings is not None:
+            self._reload()
+
+    def for_document(self, settings: LlmRequestSettings) -> "Skill4ReClient":
+        return Skill4ReClient(self.config, settings)
+
+    def close(self) -> None:
+        if self._client is not None:
+            self._client.close()
 
     def _reload(self) -> None:
-        defaults = main_model_settings_defaults(self.config)
-        model_settings = self.model_settings_store.get(*defaults) if defaults is not None else None
+        settings = self.settings
+        if settings is None:
+            raise Skill4ReClientError("文档模型配置尚未绑定")
         self.skills = self._load_skills(self.config.skill4re_skills_dir)
         self.route_cache = self._load_route_cache(self.config.skill4re_route_cache_path)
-
-        try:
-            self._client, self._local_generator = self._build_backend(
-                backend=self.config.skill4re_backend,
-                api_key=self._api_key(model_settings),
-                model_path=os.getenv("SKILL4RE_LOCAL_MODEL_PATH", ""),
-            )
-        except ImportError:
-            LOGGER.info("OpenAI SDK is not installed; skill4re will use requests fallback.")
-            self._client, self._local_generator = None, None
-
-        # SDK backends also need the configured deployment URL; otherwise qwen_api
-        # always connects to its library default even when SKILL4RE_BASE_URL is set.
-        base_url = self._base_url(model_settings)
-        api_key = self._api_key(model_settings)
-        if self._client is not None and base_url:
-            self._client = self._client.with_options(
-                base_url=normalize_openai_base_url(base_url))
-        extractor_base_url = base_url
-        if defaults is not None and self.model_settings_store.fingerprint() is None:
-            # Keep the raw default URL for the requests fallback, which normalizes it itself.
-            extractor_base_url = defaults[0]
+        self._client, self._local_generator = self._build_backend(
+            backend=settings.backend, api_key=settings.api_key,
+            model_path=os.getenv("SKILL4RE_LOCAL_MODEL_PATH", ""),
+            base_url=settings.base_url, timeout=settings.request_timeout_seconds,
+            max_retries=settings.max_retries,
+        )
 
         self.extractor = self._extractor_class(
             skills=self.skills,
-            backend=self.config.skill4re_backend,
-            model=model_settings.model if model_settings is not None else self.config.skill4re_model,
+            backend=settings.backend,
+            model=settings.model,
             client=self._client,
             local_generator=self._local_generator,
             route_cache=self.route_cache,
-            api_key=api_key,
-            base_url=extractor_base_url,
-            request_timeout=self.config.vllm_timeout_seconds,
-            enable_thinking=self.config.vllm_enable_thinking,
+            api_key=settings.api_key,
+            base_url=settings.base_url,
+            request_timeout=settings.request_timeout_seconds,
+            enable_thinking=settings.enable_thinking,
+            max_retries=settings.max_retries,
+            retry_backoff_seconds=settings.retry_backoff_seconds,
             stream_thinking=self.config.stream_thinking,
             fast_mode=self.config.skill4re_fast_mode,
             skip_coref=self.config.skill4re_skip_coref,
-        )
-        self._skills_fingerprint = self._fingerprint_skills()
-        self._model_settings_fingerprint = (
-            self.model_settings_store.fingerprint() if defaults is not None else None
         )
 
     def extract_document(
@@ -114,7 +104,8 @@ class Skill4ReClient:
         stream_thinking: Optional[bool] = None,
         thinking_budget: Optional[int] = None,
     ) -> dict[str, Any]:
-        self._reload_if_changed()
+        if self.settings is None:
+            raise Skill4ReClientError("文档模型配置尚未绑定")
         if not document_text.strip():
             return {
                 "preprocess": {
@@ -177,41 +168,6 @@ class Skill4ReClient:
         self.config.skill4re_route_cache_path.parent.mkdir(parents=True, exist_ok=True)
         self._save_route_cache(self.config.skill4re_route_cache_path, self.route_cache)
         return result
-
-    def _reload_if_changed(self) -> None:
-        with self._reload_lock:
-            fingerprint = self._fingerprint_skills()
-            defaults = main_model_settings_defaults(self.config)
-            settings_fingerprint = self.model_settings_store.fingerprint() if defaults is not None else None
-            if (
-                fingerprint == self._skills_fingerprint
-                and settings_fingerprint == self._model_settings_fingerprint
-            ):
-                return
-            LOGGER.info("Skill4RE skills or model settings changed; reloading %s", self.config.skill4re_skills_dir)
-            self._reload()
-
-    def _fingerprint_skills(self) -> tuple[tuple[str, int, int], ...]:
-        return tuple(
-            (path.name, path.stat().st_mtime_ns, path.stat().st_size)
-            for path in sorted(self.config.skill4re_skills_dir.glob("*.json"))
-        )
-
-    def _api_key(self, model_settings: ModelSettings | None = None) -> str:
-        defaults = main_model_settings_defaults(self.config)
-        if defaults is not None:
-            if model_settings is None:
-                model_settings = self.model_settings_store.get(*defaults)
-            return model_settings.api_key
-        return ""
-
-    def _base_url(self, model_settings: ModelSettings | None = None) -> str | None:
-        defaults = main_model_settings_defaults(self.config)
-        if defaults is not None:
-            if model_settings is None:
-                model_settings = self.model_settings_store.get(*defaults)
-            return model_settings.base_url
-        return None
 
     @staticmethod
     def _ensure_import_path() -> None:

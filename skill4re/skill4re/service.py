@@ -3,10 +3,7 @@ import logging
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
+from openai import OpenAI
 
 from skill4re.backends import (
     RELATION_LIST_RESPONSE_FORMAT,
@@ -52,6 +49,8 @@ class SkillRouterExtractor:
         thinking_budget: int = 0,
         fast_mode: bool = False,
         skip_coref: bool = False,
+        max_retries: int = 3,
+        retry_backoff_seconds: float = 2.0,
     ):
         self.skills = skills
         self.backend = backend
@@ -67,6 +66,8 @@ class SkillRouterExtractor:
         self.thinking_budget = thinking_budget
         self.fast_mode = fast_mode
         self.skip_coref = skip_coref
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
         self.skill_by_name = {skill.name: skill for skill in skills}
         self.valid_skill_names = set(self.skill_by_name)
 
@@ -109,6 +110,8 @@ class SkillRouterExtractor:
                 response_format=RELATION_LIST_RESPONSE_FORMAT,
                 base_url=self.base_url,
                 timeout=self.request_timeout,
+                max_retries=self.max_retries,
+                retry_backoff_seconds=self.retry_backoff_seconds,
                 enable_thinking=self.enable_thinking,
                 on_delta=on_delta,
                 stream_id=stream_id,
@@ -428,6 +431,8 @@ class SkillRouterExtractor:
             api_key=self.api_key,
             base_url=self.base_url,
             request_timeout=self.request_timeout,
+            max_retries=self.max_retries,
+            retry_backoff_seconds=self.retry_backoff_seconds,
             enable_thinking=self.enable_thinking,
             on_delta=on_delta,
             stream_id=f"{stream_prefix}-routing",
@@ -454,6 +459,8 @@ class SkillRouterExtractor:
                 api_key=self.api_key,
                 base_url=self.base_url,
                 request_timeout=self.request_timeout,
+                max_retries=self.max_retries,
+                retry_backoff_seconds=self.retry_backoff_seconds,
                 enable_thinking=self.enable_thinking,
             )
             coref_elapsed = round(time.perf_counter() - coref_started_at, 4)
@@ -480,6 +487,8 @@ class SkillRouterExtractor:
                         api_key=self.api_key,
                         base_url=self.base_url,
                         request_timeout=self.request_timeout,
+                        max_retries=self.max_retries,
+                        retry_backoff_seconds=self.retry_backoff_seconds,
                         enable_thinking=self.enable_thinking,
                         on_delta=on_delta,
                         stream_id=f"{stream_prefix}-chunk{chunk_index}-routing",

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import closing
 from dataclasses import replace
 import json
+import logging
 import re
 import time
 from pathlib import Path
@@ -20,6 +22,7 @@ from .config import (
     AppConfig,
 )
 from .llm_stream import publish_delta, publish_done, publish_stage
+from .model_settings import LlmRequestSettings, ModelSettingsStore, resolve_model_settings
 from .paddle_ocr import PaddleOcrClient
 from .agent import verify_document
 from .agent.relations import assign_relation_ids
@@ -33,6 +36,7 @@ if TYPE_CHECKING:
 
 
 RELATION_FIELD_ORDER = ("head", "relation", "tail", "evidence", "skill")
+LOGGER = logging.getLogger(__name__)
 NUMBERED_SECTION_RE = re.compile(r"^(?P<section_id>\d+(?:[.．]\d+)+)\s*(?P<title>.*)$")
 CHINESE_SECTION_RE = re.compile(r"^(?P<section_id>[一二三四五六七八九十百千万]+)、")
 MARKDOWN_HEADING_PREFIX_RE = re.compile(r"^\s{0,3}#{1,6}\s+(?P<title>.+?)\s*#*\s*$")
@@ -52,19 +56,35 @@ class DocumentPipeline:
         task_store: RedisTaskStore,
         ocr_client: PaddleOcrClient,
         relation_extractor: RelationExtractor,
+        model_settings_store: ModelSettingsStore | None = None,
     ) -> None:
         self.config = config
         self.task_store = task_store
         self.ocr_client = ocr_client
         self.relation_extractor = relation_extractor
+        self.model_settings_store = model_settings_store
 
     def process_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         task_started_at = time.perf_counter()
+        fast_mode = payload.get("fast_mode", not self.config.verification_agent_enabled)
+        if not isinstance(fast_mode, bool):
+            raise ValueError("fast_mode must be a boolean")
+        settings = resolve_model_settings(self.config, self.model_settings_store)
+        if settings.backend == "local_qwen3" and not fast_mode:
+            raise ValueError("local_qwen3 不支持校验智能体的工具调用连接")
+        LOGGER.info("Document %s model configuration: %s", task_id, settings.public_summary())
+        with closing(self.relation_extractor.for_document(settings)) as extractor:
+            return self._process_task(task_id, payload, settings, extractor, task_started_at)
+
+    def _process_task(
+        self, task_id: str, payload: dict[str, Any], settings: LlmRequestSettings,
+        relation_extractor: RelationExtractor, task_started_at: float,
+    ) -> dict[str, Any]:
         timing: dict[str, float] = {}
         file_path = Path(payload["file_path"])
         filename = payload["filename"]
         file_type = int(payload["file_type"])
-        fast_mode = payload.get("fast_mode", not self.config.agent_enabled)
+        fast_mode = payload.get("fast_mode", not self.config.verification_agent_enabled)
         if not isinstance(fast_mode, bool):
             raise ValueError("fast_mode must be a boolean")
         stream_thinking = payload.get("stream_thinking", self.config.stream_thinking)
@@ -73,7 +93,7 @@ class DocumentPipeline:
         thinking_budget = payload.get("thinking_budget", 0)
         if not isinstance(thinking_budget, int) or thinking_budget < 0:
             raise ValueError("thinking_budget must be a non-negative integer")
-        agent_config = replace(self.config, agent_enabled=not fast_mode)
+        agent_config = replace(self.config, verification_agent_enabled=not fast_mode)
         self.task_store.reset_task_runtime(task_id)
 
         self.task_store.update_task(task_id, status="ocr_running", stage="layout_parsing", progress=10, error=None)
@@ -113,12 +133,13 @@ class DocumentPipeline:
             document_text,
             relation_sections,
             relation_split_config,
+            relation_extractor=relation_extractor,
             stream_thinking=stream_thinking,
             thinking_budget=thinking_budget,
         )
         pre_agent_relations = assign_relation_ids(final_relations)
         agent_result = {"status": "disabled"}
-        if agent_config.agent_enabled:
+        if agent_config.verification_agent_enabled:
             self.task_store.update_task(task_id, status="verifying", stage="agent_verification", progress=70)
             stage_started_at = time.perf_counter()
             def report_agent_progress(agent_progress):
@@ -130,7 +151,8 @@ class DocumentPipeline:
             try:
                 trace.emit("phase_start", summary="智能体校验已开始")
                 final_relations, agent_result = verify_document(
-                    pre_agent_relations, relation_sections, document_text, agent_config, report_agent_progress, trace=trace)
+                    pre_agent_relations, relation_sections, document_text, agent_config, report_agent_progress,
+                    trace=trace, settings=settings)
             except Exception as exc:
                 final_relations = assign_relation_ids(pre_agent_relations)
                 agent_result = {"status": "failed", "reason": "核查阶段失败：" + type(exc).__name__,
@@ -154,10 +176,11 @@ class DocumentPipeline:
                 "filename": filename,
                 "page_count": len(ocr_pages),
                 "processed_at": utcnow_iso(),
-                "model": self.config.vllm_model,
+                "model": settings.model,
                 "extractor": "skill4re",
-                "skill4re_backend": self.config.skill4re_backend,
-                "skill4re_model": self.config.skill4re_model,
+                "skill4re_backend": settings.backend,
+                "skill4re_model": settings.model,
+                "llm": settings.public_summary(),
             },
             "ocr_summary": {
                 "ocr_restructure_fallback": restructure_fallback,
@@ -211,6 +234,7 @@ class DocumentPipeline:
         document_text: str,
         relation_sections: list[dict[str, Any]],
         relation_split_config: dict[str, Any],
+        relation_extractor: RelationExtractor,
         stream_thinking: bool = True,
         thinking_budget: int = 0,
     ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -236,7 +260,8 @@ class DocumentPipeline:
         })
 
         def extract_batch(batch: dict[str, Any]) -> dict[str, Any]:
-            batch_result = _order_relation_payload(self.relation_extractor.extract_document(
+            LOGGER.info("Document %s batch %s model request started", task_id, batch["batch_index"])
+            batch_result = _order_relation_payload(relation_extractor.extract_document(
                 batch["text"],
                 on_delta=batch_on_delta,
                 stream_prefix=f"batch-{batch['batch_index']}",
@@ -304,13 +329,13 @@ class DocumentPipeline:
         return skill4re_result, stage_outputs, final_relations, relation_batches
 
 
-def bootstrap_pipeline(config: AppConfig) -> DocumentPipeline:
+def bootstrap_pipeline(config: AppConfig, model_settings_store: ModelSettingsStore | None = None) -> DocumentPipeline:
     from .task_store import RedisTaskStore
 
     task_store = RedisTaskStore(config.redis_url)
     ocr_client = PaddleOcrClient(config)
     relation_extractor = Skill4ReClient(config)
-    return DocumentPipeline(config, task_store, ocr_client, relation_extractor)
+    return DocumentPipeline(config, task_store, ocr_client, relation_extractor, model_settings_store)
 
 
 def _order_relation_payload(value: Any) -> Any:
