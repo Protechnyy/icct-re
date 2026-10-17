@@ -1,3 +1,4 @@
+import codecs
 import json
 import logging
 import re
@@ -234,37 +235,113 @@ def generate_text(
                     content_parts.append(piece)
             return "".join(content_parts)
         response = api_client.chat.completions.create(**request_kwargs)
-        return response.choices[0].message.content
+        return strip_think_section(response.choices[0].message.content)
     assert local_generator is not None
     return local_generator.generate(prompt, max_new_tokens=max_tokens)
 
 
-def _consume_requests_stream(response, on_delta: Callable[[str, str, str], None], stream_id: str) -> str:
-    # 消费 OpenAI 兼容 SSE 流：reasoning_content 归 think，content 归 answer，返回累积全文
+THINK_CLOSE_TAG = "</think>"
+
+
+def strip_think_section(content: str) -> str:
+    """部分自部署模型把思考与答案都输出在 content，思考结束带 </think> 标识；非流式响应取标识之后的答案部分。"""
+    idx = content.find(THINK_CLOSE_TAG)
+    return content[idx + len(THINK_CLOSE_TAG):].strip() if idx >= 0 else content
+
+
+class _ThinkAnswerSplitter:
+    """content 混合思考与答案时按 </think> 标识分流：
+    标识之前的内容归 think，之后归 answer；标识可能被切在相邻 delta 之间，
+    因此 thinking 阶段始终缓冲与标识等长的尾巴，确认后统一下发。"""
+
+    def __init__(self):
+        self.state = "thinking"
+        self.pending = ""
+
+    def _emit(self, emit: Callable[[str, str], None], text: str) -> None:
+        emit("think" if self.state == "thinking" else "answer", text)
+
+    def feed(self, text: str, emit: Callable[[str, str], None]) -> None:
+        self.pending += text
+        while True:
+            idx = self.pending.find(THINK_CLOSE_TAG)
+            if idx < 0:
+                break
+            head = self.pending[:idx]
+            self.pending = self.pending[idx + len(THINK_CLOSE_TAG):]
+            if head:
+                self._emit(emit, head)
+            self.state = "answer"
+        if self.state == "thinking":
+            keep = len(THINK_CLOSE_TAG) - 1
+            if len(self.pending) > keep:
+                self._emit(emit, self.pending[:-keep])
+                self.pending = self.pending[-keep:]
+        elif self.pending:
+            self._emit(emit, self.pending)
+            self.pending = ""
+
+    def flush(self, emit: Callable[[str, str], None]) -> None:
+        if self.pending:
+            self._emit(emit, self.pending)
+            self.pending = ""
+
+
+def _consume_requests_stream(response, on_delta: Callable[[str, str, str], None], stream_id: str, stream_thinking: bool) -> str:
+    # 消费 OpenAI 兼容 SSE 流。远程端点的 content-type 可能不声明 charset，
+    # requests 流式解码会退回 ISO-8859-1 导致中文乱码，因此必须拿原始字节
+    # 自行按 UTF-8 增量解码；reasoning_content 归 think；content 在已出现
+    # reasoning_content 时归 answer，请求开启思考时按 </think> 标识分离，
+    # 关闭思考时直接归 answer，返回答案部分的累积文本供后续解析
     content_parts: List[str] = []
-    for raw_line in response.iter_lines(decode_unicode=True):
-        if not raw_line:
-            continue
-        line = raw_line.strip()
+    splitter = _ThinkAnswerSplitter()
+    state = {"saw_reasoning": False, "finished": False}
+
+    def emit(kind: str, text: str) -> None:
+        if kind == "answer":
+            content_parts.append(text)
+        on_delta(stream_id, kind, text)
+
+    def handle_line(line: str) -> None:
+        line = line.strip()
         if not line.startswith("data:"):
-            continue  # SSE 注释行（如 ": ping"）直接跳过
+            return  # SSE 注释行（如 ": ping"）直接跳过
         payload = line[len("data:"):].strip()
         if payload == "[DONE]":
-            break
+            state["finished"] = True
+            return
         if not payload:
-            continue
-        chunk = json.loads(payload)
-        choices = chunk.get("choices") or []
-        if not choices:
-            continue
-        delta = choices[0].get("delta") or {}
+            return
+        delta = (json.loads(payload).get("choices") or [{}])[0].get("delta") or {}
         reasoning = delta.get("reasoning_content")
         if reasoning:
-            on_delta(stream_id, "think", reasoning)
+            state["saw_reasoning"] = True
+            emit("think", reasoning)
         piece = delta.get("content")
         if piece:
-            on_delta(stream_id, "answer", piece)
-            content_parts.append(piece)
+            if stream_thinking and not state["saw_reasoning"]:
+                splitter.feed(piece, emit)
+            else:
+                emit("answer", piece)
+
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    buffer = ""
+    for chunk in response.iter_content(chunk_size=None):
+        if state["finished"]:
+            break
+        if not chunk:
+            continue
+        buffer += decoder.decode(chunk, False)
+        lines = buffer.split("\n")
+        buffer = lines.pop()  # 末段可能是被截断的行，留待与下一块拼接
+        for line in lines:
+            handle_line(line)
+            if state["finished"]:
+                break
+    if not state["finished"]:
+        buffer += decoder.decode(b"", True)
+        handle_line(buffer)
+    splitter.flush(emit)
     return "".join(content_parts)
 
 
@@ -313,8 +390,9 @@ def generate_text_with_requests(
         "stream": stream_requested,
     }
     if stream_requested:
-        # 流式：qwen_api 与 vllm 都发顶层 enable_thinking，vllm 同时保留 chat_template_kwargs
-        if backend in {"qwen_api", "vllm"}:
+        # 流式思考开关：qwen_api（DashScope 兼容端点）用顶层 enable_thinking，
+        # 自部署 vllm 端点与非流式一致走 chat_template_kwargs
+        if backend == "qwen_api":
             data["enable_thinking"] = stream_thinking
         if backend == "vllm":
             data["chat_template_kwargs"] = {"enable_thinking": stream_thinking}
@@ -356,7 +434,7 @@ def generate_text_with_requests(
         # 重试时使用带 attempt 标记的 stream_id，避免与中断前已上报的 delta 混淆
         effective_stream_id = stream_id if attempt == 1 else f"{stream_id}#retry{attempt}"
         if stream_requested:
-            return _consume_requests_stream(response, on_delta, effective_stream_id)
+            return _consume_requests_stream(response, on_delta, effective_stream_id, stream_thinking)
         result = response.json()
-        return result["choices"][0]["message"]["content"]
+        return strip_think_section(result["choices"][0]["message"]["content"])
     raise RuntimeError(f"API request failed for url: {url}")
