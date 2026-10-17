@@ -10,8 +10,10 @@ from typing import Any
 
 PDF_FILE_TYPE = 0
 IMAGE_FILE_TYPE = 1
+TEXT_FILE_TYPE = 2
 SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-SUPPORTED_UPLOAD_SUFFIXES = {".pdf", *SUPPORTED_IMAGE_SUFFIXES}
+SUPPORTED_TEXT_SUFFIXES = {".md", ".markdown", ".txt"}
+SUPPORTED_UPLOAD_SUFFIXES = {".pdf", *SUPPORTED_IMAGE_SUFFIXES, *SUPPORTED_TEXT_SUFFIXES}
 
 
 def utcnow_iso() -> str:
@@ -28,6 +30,8 @@ def detect_file_type(path: Path) -> int:
         return PDF_FILE_TYPE
     if suffix in SUPPORTED_IMAGE_SUFFIXES:
         return IMAGE_FILE_TYPE
+    if suffix in SUPPORTED_TEXT_SUFFIXES:
+        return TEXT_FILE_TYPE
     raise ValueError(f"Unsupported file type: {path.name}")
 
 
@@ -43,6 +47,16 @@ def ensure_supported_file_suffix(path: Path) -> Path:
     renamed = path.with_name(f"{path.name}{sniffed_suffix}")
     path.rename(renamed)
     return renamed
+
+
+def read_text_document(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Unable to read {path.name} as UTF-8 text") from exc
+    if not text.strip():
+        raise ValueError(f"Text document is empty: {path.name}")
+    return text
 
 
 def sniff_supported_suffix(path: Path) -> str | None:

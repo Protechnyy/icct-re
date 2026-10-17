@@ -28,8 +28,8 @@ from .agent import verify_document
 from .agent.relations import assign_relation_ids
 from .agent.trace import Trace
 from .skill4re_client import RelationExtractor, Skill4ReClient
-from .types import Chunk
-from .utils import chunk_text_with_page_map, utcnow_iso
+from .types import Chunk, RestructuredDocument
+from .utils import TEXT_FILE_TYPE, chunk_text_with_page_map, read_text_document, utcnow_iso
 
 if TYPE_CHECKING:
     from .task_store import RedisTaskStore
@@ -96,30 +96,38 @@ class DocumentPipeline:
         agent_config = replace(self.config, verification_agent_enabled=not fast_mode)
         self.task_store.reset_task_runtime(task_id)
 
-        self.task_store.update_task(task_id, status="ocr_running", stage="layout_parsing", progress=10, error=None)
-        stage_started_at = time.perf_counter()
-        layout_result = self.ocr_client.layout_parse(file_path=file_path, file_type=file_type)
-        ocr_pages = self.ocr_client.extract_pages(layout_result)
-        timing["layout_parsing_seconds"] = round(time.perf_counter() - stage_started_at, 4)
-        if not ocr_pages:
-            raise RuntimeError(f"OCR parsed 0 pages from {filename}; check the uploaded file type and PaddleOCR logs.")
+        if file_type == TEXT_FILE_TYPE:
+            document_text = read_text_document(file_path)
+            ocr_pages = []
+            layout_result = {}
+            restructured = RestructuredDocument(markdown_text="", layout_parsing_results=[])
+            restructure_fallback = None
+            page_texts = [(1, document_text)]
+        else:
+            self.task_store.update_task(task_id, status="ocr_running", stage="layout_parsing", progress=10, error=None)
+            stage_started_at = time.perf_counter()
+            layout_result = self.ocr_client.layout_parse(file_path=file_path, file_type=file_type)
+            ocr_pages = self.ocr_client.extract_pages(layout_result)
+            timing["layout_parsing_seconds"] = round(time.perf_counter() - stage_started_at, 4)
+            if not ocr_pages:
+                raise RuntimeError(f"OCR parsed 0 pages from {filename}; check the uploaded file type and PaddleOCR logs.")
 
-        self.task_store.update_task(task_id, stage="restructure_pages", progress=30)
-        stage_started_at = time.perf_counter()
-        restructure_fallback = False
-        try:
-            restructure_payload = self.ocr_client.build_restructure_payload(ocr_pages, layout_result=layout_result)
-            restructure_result = self.ocr_client.restructure_pages(restructure_payload)
-            restructured = self.ocr_client.normalize_restructured_document(restructure_result, ocr_pages)
-        except Exception:
-            restructure_fallback = True
-            restructured = self.ocr_client.normalize_restructured_document({}, ocr_pages)
-        timing["document_restructure_seconds"] = round(time.perf_counter() - stage_started_at, 4)
+            self.task_store.update_task(task_id, stage="restructure_pages", progress=30)
+            stage_started_at = time.perf_counter()
+            restructure_fallback = False
+            try:
+                restructure_payload = self.ocr_client.build_restructure_payload(ocr_pages, layout_result=layout_result)
+                restructure_result = self.ocr_client.restructure_pages(restructure_payload)
+                restructured = self.ocr_client.normalize_restructured_document(restructure_result, ocr_pages)
+            except Exception:
+                restructure_fallback = True
+                restructured = self.ocr_client.normalize_restructured_document({}, ocr_pages)
+            timing["document_restructure_seconds"] = round(time.perf_counter() - stage_started_at, 4)
 
-        page_texts = [(page.page_index, _strip_markdown_image_content(page.markdown_text)) for page in ocr_pages]
-        document_text = _strip_markdown_image_content(restructured.markdown_text)
-        if not document_text:
-            document_text = "\n\n".join(text for _, text in page_texts if text.strip())
+            page_texts = [(page.page_index, _strip_markdown_image_content(page.markdown_text)) for page in ocr_pages]
+            document_text = _strip_markdown_image_content(restructured.markdown_text)
+            if not document_text:
+                document_text = "\n\n".join(text for _, text in page_texts if text.strip())
         chunks = [Chunk(**chunk) for chunk in chunk_text_with_page_map(page_texts, self.config.max_chunk_chars)]
         relation_split_config = _relation_split_config(self.config, payload)
         relation_sections = _build_relation_sections(
@@ -174,7 +182,8 @@ class DocumentPipeline:
             "document_meta": {
                 "task_id": task_id,
                 "filename": filename,
-                "page_count": len(ocr_pages),
+                "source_type": "text" if file_type == TEXT_FILE_TYPE else "ocr",
+                "page_count": 1 if file_type == TEXT_FILE_TYPE else len(ocr_pages),
                 "processed_at": utcnow_iso(),
                 "model": settings.model,
                 "extractor": "skill4re",
@@ -209,8 +218,8 @@ class DocumentPipeline:
         timing["document_merge_seconds"] = round(time.perf_counter() - stage_started_at, 4)
         timing = {
             "total_elapsed_seconds": round(time.perf_counter() - task_started_at, 4),
-            "layout_parsing_seconds": timing["layout_parsing_seconds"],
-            "document_restructure_seconds": timing["document_restructure_seconds"],
+            **({"layout_parsing_seconds": timing["layout_parsing_seconds"]} if "layout_parsing_seconds" in timing else {}),
+            **({"document_restructure_seconds": timing["document_restructure_seconds"]} if "document_restructure_seconds" in timing else {}),
             "relation_extraction_seconds": timing["relation_extraction_seconds"],
             "document_merge_seconds": timing["document_merge_seconds"],
             **({"agent_verification_seconds": timing["agent_verification_seconds"]}

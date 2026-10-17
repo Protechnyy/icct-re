@@ -19,7 +19,7 @@ from .paddle_ocr import PaddleOcrClient
 from .skill_store import SkillStore, SkillStoreError
 from .task_store import RedisTaskStore
 from .types import TaskStatus
-from .utils import detect_file_type, ensure_supported_file_suffix, generate_task_id, safe_filename, utcnow_iso
+from .utils import TEXT_FILE_TYPE, detect_file_type, ensure_supported_file_suffix, generate_task_id, safe_filename, utcnow_iso
 from .vllm_client import VllmClient
 
 LOGGER = logging.getLogger(__name__)
@@ -96,7 +96,11 @@ def create_app(config: AppConfig | None = None) -> Flask:
                 stage="queued",
                 created_at=utcnow_iso(),
                 updated_at=utcnow_iso(),
-                metadata={"split_mode": relation_split_config["split_mode"], "fast_mode": fast_mode},
+                metadata={
+                    "split_mode": relation_split_config["split_mode"],
+                    "fast_mode": fast_mode,
+                    "source_type": "text" if file_type == TEXT_FILE_TYPE else "ocr",
+                },
             )
             payload = {
                 "file_path": str(target),
