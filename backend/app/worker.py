@@ -6,6 +6,7 @@ import time
 from .config import AppConfig
 from .llm_stream import publish_done
 from .pipeline import bootstrap_pipeline
+from .types import TaskCancelledError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +36,10 @@ def run_worker(config: AppConfig | None = None) -> None:
             LOGGER.info("Processing task %s (%s)", task_id, task["filename"])
             pipeline.process_task(task_id, task["payload"])
             LOGGER.info("Completed task %s (%s)", task_id, task["filename"])
+        except TaskCancelledError:
+            LOGGER.info("Task %s cancelled by user request", task_id)
+            task_store.update_task(task_id, status="cancelled", stage="cancelled", error=None)
+            publish_done(task_store.redis, task_id, "cancelled")
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("Task %s failed: %s", task_id, exc)
             task_store.update_task(task_id, status="failed", stage="failed", progress=100, error=str(exc))

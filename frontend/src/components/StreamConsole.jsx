@@ -125,6 +125,7 @@ function ParsedAnswer({ parsed }) {
 function stateText(stream) {
   if (stream.done === "succeeded") return "输出完成";
   if (stream.done === "failed") return "输出中断";
+  if (stream.done === "cancelled") return "输出已取消";
   if (stream.stage || stream.streams.length) return "正在输出";
   return "等待输出";
 }

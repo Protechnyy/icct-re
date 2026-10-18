@@ -10,11 +10,12 @@ import "@arco-design/web-react/es/Radio/style/css.js";
 import "@arco-design/web-react/es/Slider/style/css.js";
 import "@arco-design/web-react/es/Upload/style/css.js";
 
-// 思考强度滑杆档位：档位值对应 thinking_budget，0 档 budget=0 表示不限制模型思考长度
-const THINKING_BUDGET_OPTIONS = [
-  { label: "低", budget: 1024 },
-  { label: "中", budget: 4096 },
-  { label: "高", budget: 0 },
+// 思考强度滑杆档位：档位值对应百炼端点的 reasoning_effort 参数；该参数由服务端按档位
+// 自行控制思考的结束时机，不会像 token 上限那样把思考从中途切断
+const REASONING_EFFORT_OPTIONS = [
+  { label: "低", effort: "low" },
+  { label: "中", effort: "medium" },
+  { label: "高", effort: "high" },
 ];
 
 function formatSize(bytes) {
@@ -35,9 +36,9 @@ export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, su
   const splitMode = relationOptions?.split_mode || "small_section";
   const batchSize = relationOptions?.batch_size || 1;
   const streamThinking = relationOptions?.stream_thinking !== false;
-  const thinkingBudget = relationOptions?.thinking_budget ?? 1024;
-  const budgetIndex = Math.max(0, THINKING_BUDGET_OPTIONS.findIndex((option) => option.budget === thinkingBudget));
-  const budgetLabel = THINKING_BUDGET_OPTIONS[budgetIndex].label;
+  const reasoningEffort = relationOptions?.reasoning_effort ?? "high";
+  const effortIndex = Math.max(0, REASONING_EFFORT_OPTIONS.findIndex((option) => option.effort === reasoningEffort));
+  const effortLabel = REASONING_EFFORT_OPTIONS[effortIndex].label;
   const updateOptions = (next) => onRelationOptionsChange({ ...relationOptions, ...next });
 
   return (
@@ -91,15 +92,15 @@ export default function UploadPanel({ fileList, onChange, onSubmit, onRemove, su
       </div>
       <div className="task-config thinking-config-row">
         <div className="thinking-field">
-          <div className="field-label thinking-label-row"><span>思考强度</span><span className="thinking-budget-value">{budgetLabel}</span></div>
+          <div className="field-label thinking-label-row"><span>思考强度</span><span className="thinking-budget-value">{effortLabel}</span></div>
           <Slider
             className="thinking-budget-slider"
             min={0}
-            max={THINKING_BUDGET_OPTIONS.length - 1}
+            max={REASONING_EFFORT_OPTIONS.length - 1}
             step={1}
-            value={budgetIndex}
-            formatTooltip={(value) => THINKING_BUDGET_OPTIONS[value]?.label ?? value}
-            onChange={(value) => updateOptions({ thinking_budget: THINKING_BUDGET_OPTIONS[value].budget })}
+            value={effortIndex}
+            formatTooltip={(value) => REASONING_EFFORT_OPTIONS[value]?.label ?? value}
+            onChange={(value) => updateOptions({ reasoning_effort: REASONING_EFFORT_OPTIONS[value].effort })}
             aria-label="思考强度"
           />
         </div>

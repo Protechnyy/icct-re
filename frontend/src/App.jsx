@@ -13,7 +13,7 @@ import ResultEmptyState from "./components/ResultEmptyState";
 import TaskTable from "./components/TaskTable";
 import UploadPanel from "./components/UploadPanel";
 import useAgentEvents from "./lib/useAgentEvents";
-import { exportTaskCsv, getTaskResult, getTaskStatus, refreshTaskStatus, uploadFiles } from "./lib/api";
+import { cancelTask, exportTaskCsv, getTaskResult, getTaskStatus, refreshTaskStatus, uploadFiles } from "./lib/api";
 
 const terminalStatuses = ["succeeded", "failed", "cancelled"];
 const ResultViewer = lazy(() => import("./components/ResultViewer"));
@@ -44,7 +44,7 @@ export default function App() {
     split_mode: "small_section",
     batch_size: 1,
     stream_thinking: true,
-    thinking_budget: 1024,
+    reasoning_effort: "high",
   });
   const [submitting, setSubmitting] = useState(false);
   const [tasks, setTasks] = useState([]);
@@ -182,6 +182,11 @@ export default function App() {
           setResults((current) => ({ ...current, [taskId]: result }));
         }
         Message.success("任务状态已刷新");
+      } else if (action === "cancel") {
+        const status = await cancelTask(taskId);
+        setTasks((current) => current.map((item) => item.task_id === taskId
+          ? { ...item, ...status, request_error: null, metadata: { ...item.metadata, ...status.metadata } } : item));
+        Message.success("任务已取消");
       } else if (action === "export") {
         const blob = await exportTaskCsv(taskId);
         const url = URL.createObjectURL(blob);

@@ -28,7 +28,7 @@ from .agent import verify_document
 from .agent.relations import assign_relation_ids
 from .agent.trace import Trace
 from .skill4re_client import RelationExtractor, Skill4ReClient
-from .types import Chunk, RestructuredDocument
+from .types import Chunk, RestructuredDocument, TaskCancelledError
 from .utils import TEXT_FILE_TYPE, chunk_text_with_page_map, read_text_document, utcnow_iso
 
 if TYPE_CHECKING:
@@ -64,7 +64,12 @@ class DocumentPipeline:
         self.relation_extractor = relation_extractor
         self.model_settings_store = model_settings_store
 
+    def _ensure_not_cancelled(self, task_id: str) -> None:
+        if self.task_store.has_cancel_flag(task_id):
+            raise TaskCancelledError(task_id)
+
     def process_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_not_cancelled(task_id)
         task_started_at = time.perf_counter()
         fast_mode = payload.get("fast_mode", not self.config.verification_agent_enabled)
         if not isinstance(fast_mode, bool):
@@ -90,9 +95,9 @@ class DocumentPipeline:
         stream_thinking = payload.get("stream_thinking", self.config.stream_thinking)
         if not isinstance(stream_thinking, bool):
             raise ValueError("stream_thinking must be a boolean")
-        thinking_budget = payload.get("thinking_budget", 0)
-        if not isinstance(thinking_budget, int) or thinking_budget < 0:
-            raise ValueError("thinking_budget must be a non-negative integer")
+        reasoning_effort = payload.get("reasoning_effort", "")
+        if reasoning_effort not in {"", "low", "medium", "high"}:
+            raise ValueError("reasoning_effort must be low, medium, high or empty")
         agent_config = replace(self.config, verification_agent_enabled=not fast_mode)
         self.task_store.reset_task_runtime(task_id)
 
@@ -135,6 +140,7 @@ class DocumentPipeline:
             include_parent_title=bool(relation_split_config["include_parent_title"]),
         )
 
+        self._ensure_not_cancelled(task_id)
         self.task_store.update_task(task_id, status="extracting", stage="relation_extraction", progress=55)
         skill4re_result, stage_outputs, final_relations, relation_batches = self._extract_relations(
             task_id,
@@ -143,11 +149,12 @@ class DocumentPipeline:
             relation_split_config,
             relation_extractor=relation_extractor,
             stream_thinking=stream_thinking,
-            thinking_budget=thinking_budget,
+            reasoning_effort=reasoning_effort,
         )
         pre_agent_relations = assign_relation_ids(final_relations)
         agent_result = {"status": "disabled"}
         if agent_config.verification_agent_enabled:
+            self._ensure_not_cancelled(task_id)
             self.task_store.update_task(task_id, status="verifying", stage="agent_verification", progress=70)
             stage_started_at = time.perf_counter()
             def report_agent_progress(agent_progress):
@@ -168,6 +175,8 @@ class DocumentPipeline:
                                 "entity_aliases": {}, "changes": []}
             trace.finish(agent_result)
             timing["agent_verification_seconds"] = round(time.perf_counter() - stage_started_at, 4)
+            # 校验智能体不响应中途取消，结束一轮后在此终止，避免取消的任务继续写入结果
+            self._ensure_not_cancelled(task_id)
 
         self.task_store.update_task(task_id, status="merging", stage="document_merge", progress=85)
         stage_started_at = time.perf_counter()
@@ -245,7 +254,7 @@ class DocumentPipeline:
         relation_split_config: dict[str, Any],
         relation_extractor: RelationExtractor,
         stream_thinking: bool = True,
-        thinking_budget: int = 0,
+        reasoning_effort: str = "",
     ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
         relation_batches = _build_relation_batches(relation_sections, relation_split_config)
         if not relation_batches:
@@ -269,13 +278,15 @@ class DocumentPipeline:
         })
 
         def extract_batch(batch: dict[str, Any]) -> dict[str, Any]:
+            self._ensure_not_cancelled(task_id)
             LOGGER.info("Document %s batch %s model request started", task_id, batch["batch_index"])
             batch_result = _order_relation_payload(relation_extractor.extract_document(
                 batch["text"],
                 on_delta=batch_on_delta,
                 stream_prefix=f"batch-{batch['batch_index']}",
                 stream_thinking=stream_thinking,
-                thinking_budget=thinking_budget,
+                reasoning_effort=reasoning_effort,
+                cancel_check=lambda: self._ensure_not_cancelled(task_id),
             ))
             prediction = batch_result.get("prediction", {})
             relation_list = prediction.get("relation_list", []) if isinstance(prediction, dict) else []
@@ -298,10 +309,16 @@ class DocumentPipeline:
             }
 
         if batch_concurrency == 1:
-            batch_results = [extract_batch(batch) for batch in relation_batches]
+            batch_results = []
+            for batch in relation_batches:
+                self._ensure_not_cancelled(task_id)
+                batch_results.append(extract_batch(batch))
         else:
             with ThreadPoolExecutor(max_workers=batch_concurrency) as executor:
-                futures = [executor.submit(extract_batch, batch) for batch in relation_batches]
+                futures = []
+                for batch in relation_batches:
+                    self._ensure_not_cancelled(task_id)
+                    futures.append(executor.submit(extract_batch, batch))
                 batch_results = [future.result() for future in as_completed(futures)]
 
         batch_results.sort(key=lambda item: item["batch_index"])

@@ -11,6 +11,7 @@ from skill4re.backends import (
     generate_text,
     generate_text_with_requests,
 )
+from skill4re.config import max_tokens_for
 from skill4re.coref import resolve_coreferences
 from skill4re.dataset import approx_token_count, chunk_document
 from skill4re.normalization import merge_chunk_relations, normalize_prediction, split_by_confidence
@@ -46,7 +47,7 @@ class SkillRouterExtractor:
         request_timeout: int = 120,
         enable_thinking: bool = False,
         stream_thinking: bool = False,
-        thinking_budget: int = 0,
+        reasoning_effort: str = "",
         fast_mode: bool = False,
         skip_coref: bool = False,
         max_retries: int = 3,
@@ -63,7 +64,7 @@ class SkillRouterExtractor:
         self.request_timeout = request_timeout
         self.enable_thinking = enable_thinking
         self.stream_thinking = stream_thinking
-        self.thinking_budget = thinking_budget
+        self.reasoning_effort = reasoning_effort
         self.fast_mode = fast_mode
         self.skip_coref = skip_coref
         self.max_retries = max_retries
@@ -78,14 +79,14 @@ class SkillRouterExtractor:
         on_delta: Optional[Callable[[str, str, str], None]] = None,
         stream_id: str = "",
         stream_thinking: Optional[bool] = None,
-        thinking_budget: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Dict:
         """统一的 LLM 调用接口。
 
         根据 backend 类型选择调用方式，解析 JSON 结果。
         """
         effective_stream_thinking = self.stream_thinking if stream_thinking is None else stream_thinking
-        effective_thinking_budget = self.thinking_budget if thinking_budget is None else thinking_budget
+        effective_reasoning_effort = self.reasoning_effort if reasoning_effort is None else reasoning_effort
         if self.client is not None or self.local_generator is not None:
             content = generate_text(
                 prompt=prompt,
@@ -98,7 +99,7 @@ class SkillRouterExtractor:
                 on_delta=on_delta,
                 stream_id=stream_id,
                 stream_thinking=effective_stream_thinking,
-                thinking_budget=effective_thinking_budget,
+                reasoning_effort=effective_reasoning_effort,
             )
         else:
             content = generate_text_with_requests(
@@ -116,22 +117,13 @@ class SkillRouterExtractor:
                 on_delta=on_delta,
                 stream_id=stream_id,
                 stream_thinking=effective_stream_thinking,
-                thinking_budget=effective_thinking_budget,
+                reasoning_effort=effective_reasoning_effort,
             )
         return coerce_relation_payload(parse_json(content))
 
     def _get_max_tokens(self, task_type: str) -> int:
-        """根据任务类型获取 max_tokens 配置。"""
-        # vllm 档位对应自部署端点：部分端点把隐藏的思考 token 计入 max_tokens
-        # 配额（reasoning_tokens 实测 458 起步且随文档变长），需要预留思考开销
-        token_configs = {
-            "extraction": {"local_qwen3": 800, "qwen_api": 2200, "vllm": 3000, "default": 4200},
-            "proofreading": {"local_qwen3": 1400, "qwen_api": 2600, "vllm": 2600, "default": 3600},
-            "summarize": {"local_qwen3": 2000, "qwen_api": 3000, "vllm": 3200, "default": 4000},
-            "targeted_proofread": {"local_qwen3": 1000, "qwen_api": 1800, "vllm": 2200, "default": 2400},
-        }
-        config = token_configs.get(task_type, token_configs["extraction"])
-        return config.get(self.backend, config["default"])
+        """根据任务类型与当前后端取输出上限，取值集中在 skill4re.config.TASK_MAX_TOKENS。"""
+        return max_tokens_for(task_type, self.backend)
 
     def should_reroute_chunk(
         self,
@@ -181,7 +173,7 @@ class SkillRouterExtractor:
         on_delta: Optional[Callable[[str, str, str], None]] = None,
         stream_prefix: str = "",
         stream_thinking: Optional[bool] = None,
-        thinking_budget: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Dict:
         started_at = time.perf_counter()
         prompt = build_extraction_prompt(chunk_text, selected_skills)
@@ -193,7 +185,7 @@ class SkillRouterExtractor:
             on_delta=on_delta,
             stream_id=f"{stream_prefix}-chunk{chunk_index}-{skill_label}",
             stream_thinking=stream_thinking,
-            thinking_budget=thinking_budget,
+            reasoning_effort=reasoning_effort,
         )
         return {
             "chunk_index": chunk_index,
@@ -211,7 +203,7 @@ class SkillRouterExtractor:
         on_delta: Optional[Callable[[str, str, str], None]] = None,
         stream_prefix: str = "",
         stream_thinking: Optional[bool] = None,
-        thinking_budget: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Tuple[Dict, float, Dict]:
         relation_list = prediction.get("relation_list", [])
         if not relation_list:
@@ -226,7 +218,7 @@ class SkillRouterExtractor:
                 on_delta=on_delta,
                 stream_id=f"{stream_prefix}-proofread",
                 stream_thinking=stream_thinking,
-                thinking_budget=thinking_budget,
+                reasoning_effort=reasoning_effort,
             )
             merged = merge_chunk_relations(
                 [prediction, proofread],
@@ -264,7 +256,7 @@ class SkillRouterExtractor:
         on_delta: Optional[Callable[[str, str, str], None]] = None,
         stream_prefix: str = "",
         stream_thinking: Optional[bool] = None,
-        thinking_budget: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Tuple[Dict, float]:
         """语义合并多个 chunk 的抽取结果。
 
@@ -303,7 +295,7 @@ class SkillRouterExtractor:
                 on_delta=on_delta,
                 stream_id=f"{stream_prefix}-summarize",
                 stream_thinking=stream_thinking,
-                thinking_budget=thinking_budget,
+                reasoning_effort=reasoning_effort,
             )
             elapsed = round(time.perf_counter() - started_at, 4)
             logger.info("Summarize done: %d chunks merged", len(chunk_predictions))
@@ -330,7 +322,7 @@ class SkillRouterExtractor:
         on_delta: Optional[Callable[[str, str, str], None]] = None,
         stream_prefix: str = "",
         stream_thinking: Optional[bool] = None,
-        thinking_budget: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> Tuple[Dict, float, Dict]:
         """低置信度关系反思。
 
@@ -369,7 +361,7 @@ class SkillRouterExtractor:
                 on_delta=on_delta,
                 stream_id=f"{stream_prefix}-targeted-proofread",
                 stream_thinking=stream_thinking,
-                thinking_budget=thinking_budget,
+                reasoning_effort=reasoning_effort,
             )
             corrected_rels = corrected.get("relation_list", [])
             # 合并：高置信度 + 修正后的低置信度
@@ -404,7 +396,7 @@ class SkillRouterExtractor:
                 on_delta=on_delta,
                 stream_prefix=stream_prefix,
                 stream_thinking=stream_thinking,
-                thinking_budget=thinking_budget,
+                reasoning_effort=reasoning_effort,
             )
 
     def extract_document(
@@ -416,10 +408,18 @@ class SkillRouterExtractor:
         on_delta: Optional[Callable[[str, str, str], None]] = None,
         stream_prefix: str = "",
         stream_thinking: Optional[bool] = None,
-        thinking_budget: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
+        cancel_check: Optional[Callable[[], None]] = None,
     ) -> Dict:
         resolved_stream_thinking = self.stream_thinking if stream_thinking is None else stream_thinking
-        resolved_thinking_budget = self.thinking_budget if thinking_budget is None else thinking_budget
+        resolved_reasoning_effort = self.reasoning_effort if reasoning_effort is None else reasoning_effort
+
+        # 调用方传入的检查函数在阶段与分批边界触发，用于中途终止被取消的任务
+        def ensure_active() -> None:
+            if cancel_check is not None:
+                cancel_check()
+
+        ensure_active()
         sample_started_at = time.perf_counter()
         routing_started_at = time.perf_counter()
         routing = route_document(
@@ -439,7 +439,7 @@ class SkillRouterExtractor:
             on_delta=on_delta,
             stream_id=f"{stream_prefix}-routing",
             stream_thinking=resolved_stream_thinking,
-            thinking_budget=resolved_thinking_budget,
+            reasoning_effort=resolved_reasoning_effort,
         )
         routing_elapsed = round(time.perf_counter() - routing_started_at, 4)
         document_selected_skills = routing["selected_skills"]
@@ -451,6 +451,7 @@ class SkillRouterExtractor:
         coref_mapping: Dict[str, List[str]] = {}
         coref_elapsed = 0.0
         if used_chunking and not self.skip_coref:
+            ensure_active()
             coref_started_at = time.perf_counter()
             doc_text, coref_mapping = resolve_coreferences(
                 doc_text=doc_text,
@@ -475,6 +476,7 @@ class SkillRouterExtractor:
             worker_count = max(1, min(max_workers, len(chunks)))
             chunk_selected_skills = []
             for chunk_index, chunk_text in enumerate(chunks):
+                ensure_active()
                 chunk_routing_started_at = time.perf_counter()
                 chunk_scores = keyword_scores(chunk_text, self.skills)
                 if self.should_reroute_chunk(chunk_scores, document_selected_skills):
@@ -495,7 +497,7 @@ class SkillRouterExtractor:
                         on_delta=on_delta,
                         stream_id=f"{stream_prefix}-chunk{chunk_index}-routing",
                         stream_thinking=resolved_stream_thinking,
-                        thinking_budget=resolved_thinking_budget,
+                        reasoning_effort=resolved_reasoning_effort,
                     )
                     routing_mode = "chunk_rerouted"
                 else:
@@ -529,8 +531,10 @@ class SkillRouterExtractor:
                 )
             extraction_started_at = time.perf_counter()
             with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                futures = [
-                    executor.submit(
+                futures = []
+                for chunk_index, chunk_text in enumerate(chunks):
+                    ensure_active()
+                    futures.append(executor.submit(
                         self.extract_chunk,
                         chunk_index,
                         chunk_text,
@@ -538,10 +542,8 @@ class SkillRouterExtractor:
                         on_delta,
                         stream_prefix,
                         stream_thinking,
-                        thinking_budget,
-                    )
-                    for chunk_index, chunk_text in enumerate(chunks)
-                ]
+                        reasoning_effort,
+                    ))
                 for future in as_completed(futures):
                     chunk_predictions.append(future.result())
             chunk_predictions.sort(key=lambda item: item["chunk_index"])
@@ -554,6 +556,7 @@ class SkillRouterExtractor:
                 for item in chunk_predictions
             ]
             # 语义合并：用 LLM 做跨 chunk 的实体归一化和关系去重
+            ensure_active()
             parsed, summarize_elapsed = self.summarize_chunks(
                 doc=doc_text,
                 selected_skills=document_selected_skills,
@@ -564,7 +567,7 @@ class SkillRouterExtractor:
                 on_delta=on_delta,
                 stream_prefix=stream_prefix,
                 stream_thinking=stream_thinking,
-                thinking_budget=thinking_budget,
+                reasoning_effort=reasoning_effort,
             )
             # 如果 summarize 失败（返回空），回退到规则合并
             if not parsed.get("relation_list"):
@@ -582,6 +585,7 @@ class SkillRouterExtractor:
             chunk_predictions = []
             selected_skills = document_selected_skills
             extraction_started_at = time.perf_counter()
+            ensure_active()
             single_result = self.extract_chunk(
                 chunk_index=0,
                 chunk_text=doc_text,
@@ -589,7 +593,7 @@ class SkillRouterExtractor:
                 on_delta=on_delta,
                 stream_prefix=stream_prefix,
                 stream_thinking=stream_thinking,
-                thinking_budget=thinking_budget,
+                reasoning_effort=reasoning_effort,
             )
             parsed = normalize_prediction(
                 single_result["prediction"],
@@ -609,6 +613,7 @@ class SkillRouterExtractor:
             }
         else:
             # 低置信度反思：只对低置信度关系做 LLM 审查
+            ensure_active()
             parsed, proofreading_elapsed, proofreading_summary = self.targeted_proofread(
                 doc=doc_text,
                 selected_skills=selected_skills,
@@ -616,7 +621,7 @@ class SkillRouterExtractor:
                 on_delta=on_delta,
                 stream_prefix=stream_prefix,
                 stream_thinking=stream_thinking,
-                thinking_budget=thinking_budget,
+                reasoning_effort=reasoning_effort,
             )
         total_elapsed = round(time.perf_counter() - sample_started_at, 4)
         return {

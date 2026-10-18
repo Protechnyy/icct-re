@@ -13,7 +13,7 @@ from flask_cors import CORS
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 from .config import AppConfig, RELATION_SPLIT_MODES
-from .llm_stream import decode_entry, stream_key
+from .llm_stream import decode_entry, publish_done, stream_key
 from .model_settings import ModelSettingsError, ModelSettingsStore, main_model_settings_defaults
 from .paddle_ocr import PaddleOcrClient
 from .skill_store import SkillStore, SkillStoreError
@@ -66,13 +66,9 @@ def create_app(config: AppConfig | None = None) -> Flask:
             if stream_thinking_value is not None and stream_thinking_value not in {"true", "false"}:
                 raise ValueError("stream_thinking must be true or false")
             stream_thinking = stream_thinking_value == "true" if stream_thinking_value is not None else config.stream_thinking
-            thinking_budget_value = request.form.get("thinking_budget")
-            if thinking_budget_value is None or thinking_budget_value == "":
-                thinking_budget = 0
-            else:
-                thinking_budget = int(thinking_budget_value)
-                if thinking_budget < 0 or thinking_budget > 99999:
-                    raise ValueError("thinking_budget must be between 0 and 99999")
+            reasoning_effort = request.form.get("reasoning_effort", "")
+            if reasoning_effort not in {"", "low", "medium", "high"}:
+                raise ValueError("reasoning_effort must be low, medium, high or empty")
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -110,7 +106,7 @@ def create_app(config: AppConfig | None = None) -> Flask:
                 "relation_split_config": relation_split_config,
                 "fast_mode": fast_mode,
                 "stream_thinking": stream_thinking,
-                "thinking_budget": thinking_budget,
+                "reasoning_effort": reasoning_effort,
             }
             task_store.create_task(status, payload)
             task_store.enqueue_task(task_id)
@@ -123,6 +119,21 @@ def create_app(config: AppConfig | None = None) -> Flask:
         task = task_store.get_task(task_id)
         if not task:
             return jsonify({"error": "Task not found"}), 404
+        task.pop("payload", None)
+        return jsonify(task), 200
+
+    @app.post("/api/tasks/<task_id>/cancel")
+    def cancel_task(task_id: str) -> tuple[object, int]:
+        task = task_store.get_task(task_id)
+        if not task:
+            return jsonify({"error": "Task not found"}), 404
+        if task.get("status") in {"succeeded", "failed", "cancelled"}:
+            return jsonify({"error": "任务已经结束，无法取消"}), 409
+        # 取消标记先写入，Worker 在阶段与分块边界读到后终止；同时把尚未取走的任务移出队列
+        task_store.mark_cancel_requested(task_id)
+        task_store.remove_from_queue(task_id)
+        task = task_store.update_task(task_id, status="cancelled", stage="cancelled", error=None)
+        publish_done(task_store.redis, task_id, "cancelled")
         task.pop("payload", None)
         return jsonify(task), 200
 
