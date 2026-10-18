@@ -30,6 +30,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Worker 已启动（PID: $worker_pid）"
+echo "Worker 已启动（PID: ${worker_pid}）"
 echo "启动后端 API；按 Ctrl+C 将同时停止 API 和 Worker。"
 "$PYTHON" run_api.py

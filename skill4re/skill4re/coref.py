@@ -36,7 +36,8 @@ def resolve_coreferences(
     client: Optional[OpenAI],
     local_generator: Optional[LocalQwenGenerator],
     model: str,
-    max_tokens: int = 1500,
+    # 部分自部署端点把隐藏的思考 token 计入 max_tokens 配额，默认值预留思考开销
+    max_tokens: int = 2200,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
     request_timeout: int = 120,
