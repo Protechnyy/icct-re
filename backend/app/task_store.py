@@ -26,6 +26,9 @@ class RedisTaskStore:
     def _cancel_key(self, task_id: str) -> str:
         return f"docre:cancel:{task_id}"
 
+    def _preview_key(self, task_id: str) -> str:
+        return f"docre:preview:{task_id}"
+
     def healthcheck(self) -> bool:
         return bool(self.redis.ping())
 
@@ -75,7 +78,19 @@ class RedisTaskStore:
         value = self.redis.get(self._result_key(task_id))
         return json.loads(value) if value else None
 
+    def set_preview(self, task_id: str, document_text: str) -> None:
+        if not document_text.strip():
+            raise ValueError("文档预览内容不能为空")
+        self.redis.set(self._preview_key(task_id), json.dumps({"task_id": task_id, "document_text": document_text}, ensure_ascii=False))
+        self.update_task(task_id, preview_ready=True)
+
+    def get_preview(self, task_id: str) -> dict[str, Any] | None:
+        value = self.redis.get(self._preview_key(task_id))
+        return json.loads(value) if value else None
+
     def reset_task_runtime(self, task_id: str) -> None:
         # 重跑任务前清空上一次执行的流式输出
         self.redis.delete(stream_key(task_id))
+        self.redis.delete(self._preview_key(task_id))
+        self.update_task(task_id, preview_ready=False)
 

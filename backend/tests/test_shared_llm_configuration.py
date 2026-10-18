@@ -9,8 +9,9 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from app.config import AppConfig, RETIRED_MODEL_VARIABLES
+from app.config import AppConfig, RETIRED_MODEL_VARIABLES, normalize_openai_base_url
 from app.model_settings import ModelSettingsError, ModelSettingsStore, resolve_model_settings
+from skill4re.backends import normalize_openai_base_url as normalize_skill4re_base_url
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +39,12 @@ def base_config(storage):
     env_path = CHECK_ROOT / "absent.env"
     config = AppConfig.from_env(env_path)
     return replace(config, storage_root=Path(storage))
+
+
+def test_normalize_openai_base_url_accepts_full_chat_completions_url():
+    url = "https://api.asukalangely.top/v1/chat/completions"
+    assert normalize_openai_base_url(url) == "https://api.asukalangely.top/v1"
+    assert normalize_skill4re_base_url(url) == "https://api.asukalangely.top/v1"
 
 
 def test_public_environment_defaults_and_overrides():

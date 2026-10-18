@@ -9,9 +9,10 @@ import Tabs from "@arco-design/web-react/es/Tabs";
 import Tag from "@arco-design/web-react/es/Tag";
 import Tooltip from "@arco-design/web-react/es/Tooltip";
 import Typography from "@arco-design/web-react/es/Typography";
-import { IconCode, IconCopy, IconDownload, IconFile, IconRefresh, IconSearch } from "@arco-design/web-react/icon";
+import { IconDownload, IconFile, IconRefresh, IconSearch } from "@arco-design/web-react/icon";
 import { cloneElement, useMemo, useState } from "react";
-import { exportTaskCsv } from "../lib/api";
+import { exportEntitiesCsv, exportTaskCsv } from "../lib/api";
+import { readExtractionResult } from "../lib/extractionResult";
 import useLlmStream from "../lib/useLlmStream";
 import { STATUS_CONFIG } from "./TaskTable";
 import ResultEmptyState from "./ResultEmptyState";
@@ -40,74 +41,17 @@ function downloadBlob(filename, blob) {
   URL.revokeObjectURL(url);
 }
 
-async function copyText(value) {
-  try {
-    await navigator.clipboard.writeText(value);
-    Message.success("已复制到剪贴板");
-  } catch {
-    Message.error("复制失败，请检查浏览器剪贴板权限");
-  }
-}
-
-function JsonViewer({ data, filename }) {
-  const pretty = useMemo(() => JSON.stringify(data, null, 2), [data]);
-  return <div className="json-viewer">
-    <div className="json-toolbar"><span><IconCode /> JSON 结果</span><Space size="mini"><Button size="mini" type="text" icon={<IconCopy />} onClick={() => copyText(pretty)}>复制</Button><Button size="mini" type="text" icon={<IconDownload />} onClick={() => downloadFile(filename, data)}>下载</Button></Space></div>
-    <pre tabIndex={0} aria-label="JSON 抽取结果">{pretty}</pre>
-  </div>;
-}
-
-function getRelations(result) {
-  const source = result?.final_relation_list?.relation_list || result?.final_relation_list || result?.final_relations || result?.skill4re_result?.relation_list || [];
-  return Array.isArray(source) ? source : [];
-}
-
-function uniqueValues(values) {
-  return [...new Set((Array.isArray(values) ? values : [values]).filter((value) => value !== undefined && value !== null && value !== ""))];
-}
-
-function paragraphContents(paragraphs) {
-  return uniqueValues((Array.isArray(paragraphs) ? paragraphs : []).map((paragraph) => paragraph?.content?.trim()));
-}
-
-function SourceParagraphs({ paragraphs }) {
-  const contents = paragraphContents(paragraphs);
-  if (!contents.length) return "-";
-  const fullText = contents.join("\n\n");
-  const summary = fullText.length > 64 ? `${fullText.slice(0, 64)}…` : fullText;
-  return <Tooltip content={<div className="source-paragraph-tooltip">{fullText}</div>}><span className="source-paragraph-summary">{summary}</span></Tooltip>;
-}
-
-function getEntities(relations) {
-  const entities = new Map();
-  relations.forEach((item, index) => {
-    const subject = item.subject || item.head || item.head_entity;
-    const object = item.object || item.tail || item.tail_entity;
-    [[subject, item.subject_type || item.head_type], [object, item.object_type || item.tail_type]].forEach(([name, type]) => {
-      if (!name) return;
-      const previous = entities.get(name);
-      const sourceParagraphs = [...(previous?.sourceParagraphs || []), ...(Array.isArray(item.source_paragraphs) ? item.source_paragraphs : [])];
-      entities.set(name, {
-        key: previous?.key || `${name}-${index}`,
-        name,
-        type: previous?.type || type || "实体",
-        sourceParagraphs,
-      });
-    });
-  });
-  return [...entities.values()];
-}
-
-function DocumentPreview({ result }) {
+function DocumentPreview({ result, preview, task }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [zoom, setZoom] = useState(100);
-  const text = result?.document_text || result?.ocr_summary?.markdown_text || result?.document_meta?.markdown_text || result?.chunks?.map((chunk) => chunk.text).join("\n\n") || "当前任务未返回可预览的文档原文。";
+  const text = result?.document_text || preview?.document_text || result?.ocr_summary?.markdown_text || result?.document_meta?.markdown_text || result?.chunks?.map((chunk) => chunk.text).join("\n\n") || "";
   const highlightedText = useMemo(() => {
     if (!query.trim()) return text;
     const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
     return parts.map((part, index) => part.toLocaleLowerCase() === query.trim().toLocaleLowerCase() ? <mark key={`${part}-${index}`}>{part}</mark> : part);
   }, [query, text]);
+  if (!text) return <Empty description={["failed", "cancelled", "succeeded"].includes(task.status) ? "当前任务暂无可预览的文档原文。" : task.metadata?.source_type === "text" ? "文档读取完成后显示原文。" : "文档解析完成后显示原文。"} />;
   return <div className="document-preview"><div className="document-preview-toolbar"><Space size="small"><Button size="small" icon={<IconSearch />} onClick={() => setSearchOpen((current) => !current)}>搜索原文</Button><Button size="small" onClick={() => setZoom((current) => current >= 120 ? 90 : current + 10)}>{zoom}%</Button></Space><span>文档原文预览</span></div>{searchOpen && <div className="preview-search"><Input value={query} onChange={setQuery} allowClear placeholder="输入关键词，高亮原文匹配内容" /></div>}<article style={{ fontSize: `${zoom / 100}rem` }}>{highlightedText}</article></div>;
 }
 
@@ -116,6 +60,8 @@ const STAGE_LABELS = {
   layout_parsing: "版面解析",
   restructure_pages: "文档重构",
   relation_extraction: "关系抽取",
+  entity_recognition: "实体识别",
+  entity_merge: "实体归并",
   document_merge: "结果合并",
   completed: "处理完成",
   failed: "处理失败",
@@ -126,6 +72,8 @@ const TIMING_LABELS = {
   layout_parsing_seconds: "版面解析",
   document_restructure_seconds: "文档重构",
   relation_extraction_seconds: "关系抽取",
+  entity_recognition_seconds: "实体识别",
+  entity_merge_seconds: "实体归并",
   document_merge_seconds: "结果合并",
   routing_seconds: "Skill 路由",
   coref_seconds: "指代消解",
@@ -171,35 +119,36 @@ function splitModeLabel(splitMode) {
   }[splitMode] || "小节";
 }
 
-export default function ResultViewer({ task, result, resultError, onRetryResult }) {
+export default function ResultViewer({ task, result, resultError, onRetryResult, preview, previewError, onRetryPreview }) {
   const [activeTab, setActiveTab] = useState("preview");
   const [exportingCsv, setExportingCsv] = useState(false);
   const [entityWidths, setEntityWidths] = useState({});
   const [relationWidths, setRelationWidths] = useState({});
-  const relationRows = useMemo(() => getRelations(result).map((item, index) => ({
+  const extracted = useMemo(() => {
+    try { return readExtractionResult(result); }
+    catch (error) { return { entities: [], relations: [], error: error.message }; }
+  }, [result]);
+  const relationRows = useMemo(() => extracted.relations.map((item, index) => ({
     ...item,
     resultRowKey: `${task?.task_id}:${index}`,
-  })), [result, task?.task_id]);
+  })), [extracted, task?.task_id]);
   const llmStream = useLlmStream(task?.task_id, task?.status);
   if (!task) return <ResultEmptyState />;
   const status = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知" };
-  const relations = getRelations(result);
-  const entities = getEntities(relations);
+  const { relations, entities } = extracted;
   const entityColumns = [
-    { key: "name", title: "实体名称", dataIndex: "name", ellipsis: true },
-    { key: "source", title: "来源段落", width: 360, render: (_, item) => <SourceParagraphs paragraphs={item.sourceParagraphs} /> },
+    { key: "name", title: "实体名称", render: (_, item) => <div>{item.name}{item.aliases?.length > 0 && <div className="entity-inline-types">别名：{item.aliases.map((alias) => alias.name).join("、")}</div>}</div> },
+    { key: "type", title: "实体类型", dataIndex: "type", width: 180 },
   ];
   const relationColumns = [
-    { key: "subject", title: "主体", render: (_, item) => item.subject || item.head || item.head_entity || "-", ellipsis: true },
+    { key: "subject", title: "头实体", render: (_, item) => <div>{item.subject || item.head || item.head_entity || "-"}<div className="entity-inline-types">{item.head_type || item.subject_type || "未标注"}</div></div> },
     { key: "relation", title: "关系", render: (_, item) => item.relation || "-", width: 150, ellipsis: true },
-    { key: "object", title: "客体", render: (_, item) => item.object || item.tail || item.tail_entity || "-", ellipsis: true },
-    { key: "source", title: "来源段落", render: (_, item) => <SourceParagraphs paragraphs={item.source_paragraphs} />, width: 360 },
+    { key: "object", title: "尾实体", render: (_, item) => <div>{item.object || item.tail || item.tail_entity || "-"}<div className="entity-inline-types">{item.tail_type || item.object_type || "未标注"}</div></div> },
   ];
   const tabItems = [
-    { key: "preview", title: "文档预览", content: <DocumentPreview result={result} /> },
+    { key: "preview", title: "文档预览", content: <DocumentPreview result={result} preview={preview} task={task} /> },
     { key: "entities", title: `实体 ${entities.length ? `(${entities.length})` : ""}`, content: <ResizableResultTable rowKey="key" columns={entityColumns} widths={entityWidths} onWidthsChange={setEntityWidths} defaultColumnWidth={260} data={entities} pagination={false} noDataElement={<Empty description="暂无实体结果" />} /> },
     { key: "relations", title: `关系 ${relations.length ? `(${relations.length})` : ""}`, content: <ResizableResultTable rowKey="resultRowKey" columns={relationColumns} widths={relationWidths} onWidthsChange={setRelationWidths} data={relationRows} pagination={false} noDataElement={<Empty description="暂无关系结果" />} /> },
-    { key: "json", title: "JSON", content: <JsonViewer data={result || { status: task.status }} filename={`${task.filename}.json`} /> },
     { key: "logs", title: "运行日志", content: <ExecutionLog task={task} result={result} /> },
   ];
   function renderTabHeader(tabProps, DefaultTabHeader) {
@@ -219,12 +168,12 @@ export default function ResultViewer({ task, result, resultError, onRetryResult 
       }
     }}><DefaultTabHeader {...tabProps} /></div>;
   }
-  async function handleExportCsv() {
+  async function handleExportCsv(entityExport = false) {
     try {
       setExportingCsv(true);
-      const blob = await exportTaskCsv(task.task_id);
+      const blob = await (entityExport ? exportEntitiesCsv : exportTaskCsv)(task.task_id);
       const stem = task.filename.replace(/\.[^.]+$/, "");
-      downloadBlob(`${stem}_relations.csv`, blob);
+      downloadBlob(`${stem}_${entityExport ? "entities" : "relations"}.csv`, blob);
       Message.success("CSV 导出成功");
     } catch (error) {
       Message.error(`CSV 导出失败：${String(error.message || error)}`);
@@ -234,20 +183,20 @@ export default function ResultViewer({ task, result, resultError, onRetryResult 
   }
   return <Card className="result-workspace" bordered={false}>
     <div className="task-summary-header">
-      <div className="task-summary-main"><div className="summary-file-icon"><IconFile /></div><div className="task-summary-text"><Tooltip content={task.filename}><Typography.Title heading={2} ellipsis={{ showTooltip: true }}>{task.filename}</Typography.Title></Tooltip><div className="task-summary-meta"><Tag color={status.color}>{status.label}</Tag><span>粒度：{splitModeLabel(task.metadata?.split_mode)}</span><span>Skill：自动路由</span><span>创建于 {task.created_at ? new Date(task.created_at).toLocaleString("zh-CN") : "-"}</span></div></div></div>
-      <Space className="task-summary-actions" wrap><Tooltip content="当前后端暂未提供重新执行接口"><Button icon={<IconRefresh />} disabled>重新执行</Button></Tooltip><Button icon={<IconDownload />} onClick={() => result && downloadFile(`${task.filename}.json`, result)} disabled={!result}>导出 JSON</Button><Button type="primary" icon={<IconDownload />} loading={exportingCsv} disabled={!result} onClick={handleExportCsv}>导出 CSV</Button></Space>
+      <div className="task-summary-main"><div className="summary-file-icon"><IconFile /></div><div className="task-summary-text"><Tooltip content={task.filename}><Typography.Title heading={2} ellipsis={{ showTooltip: true }}>{task.filename}</Typography.Title></Tooltip><div className="task-summary-meta"><Tag color={status.color}>{status.label}</Tag><span>粒度：{splitModeLabel(task.metadata?.split_mode)}</span>{extracted.revision && <span>抽取配置：版本 {extracted.revision}</span>}<span>创建于 {task.created_at ? new Date(task.created_at).toLocaleString("zh-CN") : "-"}</span></div></div></div>
+      <Space className="task-summary-actions" wrap><Button icon={<IconDownload />} onClick={() => result && downloadFile(`${task.filename}.json`, result)} disabled={!result}>导出 JSON</Button><Button icon={<IconDownload />} loading={exportingCsv} disabled={!result || !!extracted.error} onClick={() => handleExportCsv(true)}>导出实体 CSV</Button><Button type="primary" icon={<IconDownload />} loading={exportingCsv} disabled={!result || !!extracted.error} onClick={() => handleExportCsv(false)}>导出关系 CSV</Button></Space>
     </div>
     <StreamConsole stream={llmStream} />
     {resultError && <Alert className="result-request-error" type="error" title="读取抽取结果失败" content={resultError} action={<Button onClick={onRetryResult}>重新读取</Button>} />}
+    {previewError && !result && <Alert className="result-request-error" type="error" title="读取文档预览失败" content={previewError} action={<Button onClick={onRetryPreview}>重新读取</Button>} />}
+    {extracted.error && <Alert className="result-request-error" type="error" title="结果格式错误" content={extracted.error} />}
     {!result && task.status === "failed" ? <Alert type="error" title="任务执行失败" content={task.error || "请检查运行日志后重新执行任务。"} closable={false} /> : null}
-    {!result && task.status !== "failed" ? <div className="result-pending"><Empty description="结果尚未就绪，系统将持续更新任务进度。" /></div> : <>
-      <Tabs className="result-tabs" activeTab={activeTab} onChange={setActiveTab} type="line" animation={false} destroyOnHide renderTabHeader={renderTabHeader} renderTabTitle={(node, { isActive }) => cloneElement(node, { tabIndex: isActive ? 0 : -1 })}>
-        {tabItems.map((item) => <Tabs.TabPane key={item.key} title={item.title}>
-          <div className="result-tab-body" tabIndex={0} aria-label={`${item.title}内容`}>
-            {item.content}
-          </div>
-        </Tabs.TabPane>)}
-      </Tabs>
-    </>}
+    <Tabs className="result-tabs" activeTab={activeTab} onChange={setActiveTab} type="line" animation={false} destroyOnHide renderTabHeader={renderTabHeader} renderTabTitle={(node, { isActive }) => cloneElement(node, { tabIndex: isActive ? 0 : -1 })}>
+      {tabItems.map((item) => <Tabs.TabPane key={item.key} title={item.title}>
+        <div className="result-tab-body" tabIndex={0} aria-label={`${item.title}内容`}>
+          {item.content}
+        </div>
+      </Tabs.TabPane>)}
+    </Tabs>
   </Card>;
 }

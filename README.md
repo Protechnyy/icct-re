@@ -1,12 +1,16 @@
 # ICCT-RE（文档级关系抽取）
 
-ICCT-RE 是一个文档级关系抽取工作台。上传 PDF 或图片后，后端依次完成 OCR 版面解析、结构化重排、Skill4RE 技能路由和关系抽取，最终返回 `relation_list` JSON。
+ICCT-RE 是一个文档级实体与关系抽取工作台。上传 PDF、图片、TXT 或 Markdown 后，后端识别网页配置范围内的全部实体及实体类型，并抽取具有原文证据的指定关系。结果使用独立的 `entities`、`relations` 集合。
+
+结果格式为版本 4。实体表展示名称、别名和类型，关系表展示头实体、关系和尾实体及类型。JSON、实体 CSV 和关系 CSV 使用业务字段；原文引用仅参与处理期间的身份判断与校验。历史结果读取时转换，已有文件保持原样。字段示例见 [抽取配置与结果](docs/extraction-schema.md)。
+
+结果页面提供文档预览、实体、关系和运行日志。PDF 和图片完成 OCR 后即可预览原文；Markdown 和 TXT 直接读取原文并跳过 OCR。预览在抽取期间保持可用。
 
 ## 项目结构
 
 - [backend/](backend/)：Flask API、Redis 任务队列、Worker、OCR / LLM 流水线
-- [frontend/](frontend/)：React + Vite + Ant Design 前端工作台
-- [skill4re/](skill4re/)：关系抽取框架、技能路由和领域 skill 定义
+- [frontend/](frontend/)：React、Vite、Arco Design 前端工作台
+- [skill4re/](skill4re/)：模型请求适配、类型定义、实体识别与关系抽取
 - [data/](data/)：上传文件、任务结果和临时缓存目录
 
 ## 服务依赖
@@ -89,7 +93,7 @@ PADDLE_OCR_SERVER_URL=http://127.0.0.1:8118/v1
 
 ## 公共模型配置
 
-关系抽取和 skills 路由共用一组 OpenAI 兼容模型连接。复制 `backend/.env.example` 为 `backend/.env` 后，填写有效的公共地址、Key 和模型。
+实体识别、批量实体归并和关系抽取共用一组 OpenAI 兼容模型连接。每个原文批次分别执行一次实体识别和关系抽取，返回结果执行程序校验。复制 `backend/.env.example` 为 `backend/.env` 后，填写有效的公共地址、Key 和模型。
 
 ```env
 LLM_BACKEND=vllm
@@ -102,11 +106,13 @@ LLM_MAX_RETRIES=3
 LLM_RETRY_BACKOFF_SECONDS=2
 ```
 
-`LLM_BASE_URL` 支持 `/v1` 地址或完整 `/v1/chat/completions` 地址。`LLM_BACKEND` 支持 `vllm`、`qwen_api`、`openai`、`api`，选择相应的请求参数形式；路由与抽取均使用公共地址、Key 和模型。百炼部署可设置 `LLM_BACKEND=qwen_api`，`RELATION_BATCH_CONCURRENCY=4`。
+`LLM_BASE_URL` 支持 `/v1` 地址或完整 `/v1/chat/completions` 地址。`LLM_BACKEND` 支持 `vllm`、`qwen_api`、`openai`、`api`，选择相应的请求参数形式；全部实体与关系阶段使用公共地址、Key 和模型。远程服务需要支持 JSON Schema 结构化输出。百炼部署可设置 `LLM_BACKEND=qwen_api`，`RELATION_BATCH_CONCURRENCY=4`。
 
-`LLM_REQUEST_TIMEOUT_SECONDS` 限制单次请求。`LLM_MAX_RETRIES=3` 表示最多尝试三次，包含首次请求；requests 重试等待按 `LLM_RETRY_BACKOFF_SECONDS × 当前尝试次数` 递增，SDK 使用其内置退避。
+`LLM_REQUEST_TIMEOUT_SECONDS` 限制单次请求。`LLM_MAX_RETRIES=3` 表示最多尝试三次，包含首次请求。网页抽取的重试等待按 `LLM_RETRY_BACKOFF_SECONDS × 当前尝试次数` 递增，SDK 自身重试关闭。
 
-顶部模型设置编辑公共地址、Key 和模型，保存值优先于环境变量默认值。Key 留空保留现有值，模型名称留空恢复 `LLM_MODEL`。已有 `STORAGE_ROOT/settings/model.json` 可以继续使用。每篇文档在 Worker 开始处理、执行 OCR 之前读取一次配置；路由与全部 batch 使用该快照。排队期间保存设置，文档开始处理时使用新配置；OCR 或抽取期间保存设置，进行中的文档继续使用原配置，后续开始处理的文档使用新配置。通过前端保存无需重启，修改部署环境中的 backend 或运行限制需要重启相应进程。
+顶部模型设置编辑公共地址、Key 和模型，保存值优先于环境变量默认值。Key 留空保留现有值，模型名称留空恢复 `LLM_MODEL`。已有 `STORAGE_ROOT/settings/model.json` 可以继续使用。每篇文档在 Worker 开始处理、执行 OCR 之前读取一次模型设置与抽取配置；全部实体与关系 batch 使用文档自己的快照。排队期间保存设置，文档开始处理时使用新配置；OCR 或抽取期间保存设置，进行中的文档继续使用原配置，后续开始处理的文档使用新配置。通过前端保存无需重启，修改部署环境中的 backend 或运行限制需要重启相应进程。
+
+顶部“抽取配置”维护实体类型、父类型、关系定义与逐行头尾类型组合，保存在 `STORAGE_ROOT/settings/extraction-schema.json`。默认提供指挥、协同、情报保障，以及武器平台的四个子类型。保存冲突返回 409，进行中文档保持原版本。实体包含未参与关系的独立实体，保存名称、类型和别名。字段、示例、提示词与导出说明见 [项目说明](docs/ICCT-RE%20项目说明.md) 和 [抽取配置与结果](docs/extraction-schema.md)。
 
 ### 配置名称迁移
 
@@ -199,6 +205,6 @@ curl http://127.0.0.1:5000/api/health
 | `GET` | `/api/status/<task_id>` | 查询任务状态和进度 |
 | `GET` | `/api/result/<task_id>` | 获取 OCR、抽取阶段和最终关系结果 |
 | `GET` | `/api/health` | 检查 Redis、PaddleOCR-VL 和 vLLM |
-| `GET` | `/api/skills` | 获取 Skill4RE skill 列表 |
-| `POST` | `/api/skills` | 新增 skill |
-| `PUT` | `/api/skills/<name>` | 修改 skill |
+| `GET`、`PUT` | `/api/settings/extraction-schema` | 读取或保存完整实体与关系配置 |
+| `GET` | `/api/result/<task_id>/entities.csv` | 下载包含全部独立实体的实体 CSV |
+| `GET` | `/api/tasks/<task_id>/preview` | 获取已读取或完成 OCR 的文档原文，尚未就绪时返回 409 |

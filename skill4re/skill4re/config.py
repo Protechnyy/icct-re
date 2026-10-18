@@ -20,6 +20,9 @@ DEFAULT_LOCAL_MODEL_PATH = str(REPO_ROOT / "models" / "Qwen3-32B")
 # 单独控制，不再叠加预留。本机量化推理（local_qwen3）的思考由 /no_think 关闭，
 # 上限按本机速度与答案规模单独设定。
 ANSWER_MAX_TOKENS: Dict[str, int] = {
+    "entity_recognition": 16384,
+    "entity_proofreading": 16384,
+    "entity_merge": 8192,
     "routing": 500,
     "coref": 3600,
     "extraction": 16384,
@@ -29,6 +32,9 @@ ANSWER_MAX_TOKENS: Dict[str, int] = {
 }
 THINKING_MAX_TOKENS = 8192
 LOCAL_MAX_TOKENS: Dict[str, int] = {
+    "entity_recognition": 2400,
+    "entity_proofreading": 2400,
+    "entity_merge": 1600,
     "routing": 160,
     "coref": 1600,
     "extraction": 2400,

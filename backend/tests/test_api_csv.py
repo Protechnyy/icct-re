@@ -6,7 +6,7 @@ import io
 from app.api import CSV_COLUMNS, _relations_to_csv
 
 
-def test_relations_to_csv_exports_final_relations_with_sources() -> None:
+def test_relations_to_csv_exports_business_fields() -> None:
     payload = {
         "final_relation_list": {
             "relation_list": [
@@ -32,9 +32,7 @@ def test_relations_to_csv_exports_final_relations_with_sources() -> None:
     assert csv_text.startswith("\ufeff")
     assert tuple(rows[0].keys()) == CSV_COLUMNS
     assert rows[0]["主体"] == "铁幕回声行动"
-    assert rows[0]["来源章节"] == "六"
-    assert rows[0]["来源页码"] == "2"
-    assert rows[0]["来源段落"] == "文件等级：机密。"
+    assert rows[0] == {"主体": "铁幕回声行动", "关系": "文件等级", "客体": "机密"}
 
 
 def test_relations_to_csv_writes_headers_for_empty_result() -> None:

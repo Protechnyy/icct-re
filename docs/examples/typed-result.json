@@ -1,0 +1,17 @@
+{
+  "result_schema_version": 4,
+  "document_text": "联合指挥所甲为指挥机构。",
+  "extraction_schema": {
+    "schema_version": 1,
+    "revision": 1,
+    "entity_types": [{"id": "command_organization", "name": "指挥机构", "description": "原文明确承担指挥职责的机构。", "parent_id": null, "examples": []}],
+    "relation_types": [{"id": "command", "name": "指挥", "description": "指挥方对被指挥方实施指挥。", "enabled": true, "symmetric": false, "allowed_pairs": [{"head_type_id": "command_organization", "tail_type_id": "command_organization"}], "examples": []}]
+  },
+  "entities": [{
+    "entity_id": "entity_000001",
+    "name": "联合指挥所甲",
+    "type_ids": ["command_organization"],
+    "aliases": []
+  }],
+  "relations": []
+}

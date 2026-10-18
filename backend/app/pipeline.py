@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import closing
+from difflib import SequenceMatcher
 import json
 import logging
 import re
@@ -21,11 +21,13 @@ from .config import (
     AppConfig,
 )
 from .llm_stream import publish_delta, publish_done, publish_stage
+from .extraction_schema_store import ExtractionSchemaStore
 from .model_settings import LlmRequestSettings, ModelSettingsStore, resolve_model_settings
 from .paddle_ocr import PaddleOcrClient
 from .skill4re_client import RelationExtractor, Skill4ReClient
 from .types import Chunk, RestructuredDocument, TaskCancelledError
 from .utils import TEXT_FILE_TYPE, chunk_text_with_page_map, read_text_document, utcnow_iso
+from skill4re.extraction_schema import public_result
 
 if TYPE_CHECKING:
     from .task_store import RedisTaskStore
@@ -59,6 +61,7 @@ class DocumentPipeline:
         self.ocr_client = ocr_client
         self.relation_extractor = relation_extractor
         self.model_settings_store = model_settings_store
+        self.extraction_schema_store = ExtractionSchemaStore(config.storage_root)
 
     def _ensure_not_cancelled(self, task_id: str) -> None:
         if self.task_store.has_cancel_flag(task_id):
@@ -68,13 +71,14 @@ class DocumentPipeline:
         self._ensure_not_cancelled(task_id)
         task_started_at = time.perf_counter()
         settings = resolve_model_settings(self.config, self.model_settings_store)
+        extraction_schema = self.extraction_schema_store.snapshot()
         LOGGER.info("Document %s model configuration: %s", task_id, settings.public_summary())
-        with closing(self.relation_extractor.for_document(settings)) as extractor:
-            return self._process_task(task_id, payload, settings, extractor, task_started_at)
+        with closing(self.relation_extractor.for_document(settings, extraction_schema)) as extractor:
+            return self._process_task(task_id, payload, settings, extractor, task_started_at, extraction_schema)
 
     def _process_task(
         self, task_id: str, payload: dict[str, Any], settings: LlmRequestSettings,
-        relation_extractor: RelationExtractor, task_started_at: float,
+        relation_extractor: RelationExtractor, task_started_at: float, extraction_schema,
     ) -> dict[str, Any]:
         timing: dict[str, float] = {}
         file_path = Path(payload["file_path"])
@@ -120,6 +124,8 @@ class DocumentPipeline:
             document_text = _strip_markdown_image_content(restructured.markdown_text)
             if not document_text:
                 document_text = "\n\n".join(text for _, text in page_texts if text.strip())
+        self._ensure_not_cancelled(task_id)
+        self.task_store.set_preview(task_id, document_text)
         chunks = [Chunk(**chunk) for chunk in chunk_text_with_page_map(page_texts, self.config.max_chunk_chars)]
         relation_split_config = _relation_split_config(self.config, payload)
         relation_sections = _build_relation_sections(
@@ -128,7 +134,7 @@ class DocumentPipeline:
         )
 
         self._ensure_not_cancelled(task_id)
-        self.task_store.update_task(task_id, status="extracting", stage="relation_extraction", progress=55)
+        self.task_store.update_task(task_id, status="extracting", stage="entity_recognition", progress=40)
         skill4re_result, stage_outputs, final_relations, relation_batches = self._extract_relations(
             task_id,
             document_text,
@@ -137,11 +143,12 @@ class DocumentPipeline:
             relation_extractor=relation_extractor,
             stream_thinking=stream_thinking,
             reasoning_effort=reasoning_effort,
+            page_texts=page_texts if file_type != TEXT_FILE_TYPE else [],
+            ocr_pages=ocr_pages,
         )
         self._ensure_not_cancelled(task_id)
         self.task_store.update_task(task_id, status="merging", stage="document_merge", progress=85)
         stage_started_at = time.perf_counter()
-        safe_layout_result = {k: v for k, v in layout_result.items() if k != "_pages_res"}
         timing["relation_extraction_seconds"] = round(
             float(stage_outputs.get("timing", {}).get("relation_extraction_seconds", 0.0) or 0.0),
             4,
@@ -149,6 +156,10 @@ class DocumentPipeline:
         stage_outputs["timing"] = timing
         skill4re_result["timing"] = timing
         result = {
+            "result_schema_version": 4,
+            "extraction_schema": extraction_schema.payload(),
+            "entities": skill4re_result["entities"],
+            "relations": final_relations,
             "document_meta": {
                 "task_id": task_id,
                 "filename": filename,
@@ -168,20 +179,10 @@ class DocumentPipeline:
                 "relation_section_count": len(relation_sections),
                 "relation_batch_count": len(relation_batches),
                 "relation_count": len(final_relations),
-                "selected_skills": skill4re_result.get("routing", {}).get("selected_skills", []),
+                "entity_count": len(skill4re_result["entities"]),
             },
-            "ocr_raw": safe_layout_result,
-            "ocr_pages": [page.to_dict() for page in ocr_pages],
-            "ocr_restructured": restructured.to_dict(),
             "document_text": document_text,
-            "chunks": [chunk.to_dict() for chunk in chunks],
-            "relation_split_config": relation_split_config,
-            "relation_sections": relation_sections,
-            "relation_batches": [_public_relation_batch(batch) for batch in relation_batches],
             "stage_outputs": stage_outputs,
-            "skill4re_result": skill4re_result,
-            "final_relations": final_relations,
-            "final_relation_list": {"relation_list": final_relations},
         }
         timing["document_merge_seconds"] = round(time.perf_counter() - stage_started_at, 4)
         timing = {
@@ -190,6 +191,7 @@ class DocumentPipeline:
             **({"document_restructure_seconds": timing["document_restructure_seconds"]} if "document_restructure_seconds" in timing else {}),
             "relation_extraction_seconds": timing["relation_extraction_seconds"],
             "document_merge_seconds": timing["document_merge_seconds"],
+            **{key: value for key, value in skill4re_result["stage_timing"].items() if key != "relation_extraction_seconds"},
         }
         stage_outputs["timing"] = timing
         skill4re_result["timing"] = timing
@@ -197,7 +199,8 @@ class DocumentPipeline:
         saved_paths = _result_file_paths(result_dir)
         result["document_meta"]["result_dir"] = str(result_dir)
         result["saved_paths"] = saved_paths
-        _save_result_files(result_dir, result)
+        result = public_result(result)
+        _save_result_files(result_dir, result, ocr_restructured=restructured.to_dict())
         self.task_store.set_result(task_id, result)
         self.task_store.update_task(task_id, status="succeeded", stage="completed", progress=100, error=None)
         publish_done(self.task_store.redis, task_id, "succeeded")
@@ -212,104 +215,107 @@ class DocumentPipeline:
         relation_extractor: RelationExtractor,
         stream_thinking: bool = True,
         reasoning_effort: str = "",
+        page_texts=None,
+        ocr_pages=None,
     ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
         relation_batches = _build_relation_batches(relation_sections, relation_split_config)
         if not relation_batches:
             relation_batches = _build_document_relation_batches(document_text, relation_split_config)
 
-        batch_results: list[dict[str, Any]] = []
-        all_relations: list[dict[str, Any]] = []
-        batch_concurrency = max(1, min(self.config.relation_batch_concurrency, len(relation_batches)))
-        batch_extraction_started_at = time.perf_counter()
+        sources, relation_batches = _typed_sources_and_batches(document_text, relation_batches, page_texts or [], relation_split_config["max_batch_tokens"], ocr_pages=ocr_pages)
         redis = self.task_store.redis
 
         def on_delta(stream_id: str, kind: str, text: str) -> None:
             publish_delta(redis, task_id, stream_id, kind, text)
 
-        # delta 回调仅在 STREAM_ENABLED 时注入；关闭时调用退回非流式一次性模式
         batch_on_delta: Any = on_delta if self.config.stream_enabled else None
-        publish_stage(redis, task_id, {
-            "phase": "extraction_started",
-            "concurrency": batch_concurrency,
-            "batch_count": len(relation_batches),
-        })
 
-        def extract_batch(batch: dict[str, Any]) -> dict[str, Any]:
+        def on_stage(stage, details):
             self._ensure_not_cancelled(task_id)
-            LOGGER.info("Document %s batch %s model request started", task_id, batch["batch_index"])
-            batch_result = _order_relation_payload(relation_extractor.extract_document(
-                batch["text"],
-                on_delta=batch_on_delta,
-                stream_prefix=f"batch-{batch['batch_index']}",
-                stream_thinking=stream_thinking,
-                reasoning_effort=reasoning_effort,
-                cancel_check=lambda: self._ensure_not_cancelled(task_id),
-            ))
-            prediction = batch_result.get("prediction", {})
-            relation_list = prediction.get("relation_list", []) if isinstance(prediction, dict) else []
-            batch_relations = [
-                _attach_relation_source(_order_relation_item(item), batch)
-                for item in relation_list
-                if isinstance(item, dict)
-            ]
-            return {
-                "batch_index": batch["batch_index"],
-                "split_mode": batch["split_mode"],
-                "section_ids": batch["section_ids"],
-                "parent_title": batch["parent_title"],
-                "page_start": batch["page_start"],
-                "page_end": batch["page_end"],
-                "block_ids": batch["block_ids"],
-                "estimated_tokens": batch["estimated_tokens"],
-                "result": batch_result,
-                "relations": batch_relations,
-            }
+            start, end = {"entity_recognition": (40, 58), "entity_merge": (58, 65), "relation_extraction": (65, 85)}[stage]
+            total = details.get("request_count", 0)
+            progress = start + int((end - start) * details.get("completed_count", 0) / total) if total else start
+            self.task_store.update_task(task_id, status="extracting", stage=stage, progress=progress)
+            publish_stage(redis, task_id, {"phase": stage, **details})
 
-        if batch_concurrency == 1:
-            batch_results = []
-            for batch in relation_batches:
-                self._ensure_not_cancelled(task_id)
-                batch_results.append(extract_batch(batch))
-        else:
-            with ThreadPoolExecutor(max_workers=batch_concurrency) as executor:
-                futures = []
-                for batch in relation_batches:
-                    self._ensure_not_cancelled(task_id)
-                    futures.append(executor.submit(extract_batch, batch))
-                batch_results = [future.result() for future in as_completed(futures)]
-
-        batch_results.sort(key=lambda item: item["batch_index"])
-        for batch_result in batch_results:
-            all_relations.extend(batch_result["relations"])
-
-        final_relations = _dedupe_relations(all_relations)
-        publish_stage(redis, task_id, {
-            "phase": "extraction_finished",
-            "relation_count": len(final_relations),
-        })
-        skill4re_result = _combine_batch_skill4re_results(
-            batch_results,
-            final_relations,
-            relation_sections,
-            relation_split_config,
+        skill4re_result = relation_extractor.extract_document(
+            document_text, batches=relation_batches, sources=sources,
+            on_delta=batch_on_delta, on_stage=on_stage,
+            stream_thinking=stream_thinking, reasoning_effort=reasoning_effort,
+            cancel_check=lambda: self._ensure_not_cancelled(task_id),
+            diagnostic_dir=self.config.storage_root / "diagnostics" / task_id,
         )
-        skill4re_result.setdefault("timing", {})["wall_seconds"] = round(
-            time.perf_counter() - batch_extraction_started_at,
-            4,
-        )
-        skill4re_result["timing"] = _public_timing(skill4re_result.get("timing", {}))
-        skill4re_result.setdefault("preprocess", {})["relation_batch_concurrency"] = batch_concurrency
-        prediction = skill4re_result.get("prediction", {})
-        stage_outputs = {
-            "routing": skill4re_result.get("routing", {}),
-            "preprocess": skill4re_result.get("preprocess", {}),
-            "timing": skill4re_result.get("timing", {}),
-            "proofreading": skill4re_result.get("proofreading", {}),
-            "chunk_predictions": skill4re_result.get("chunk_predictions", []),
-            "batch_results": batch_results,
-            "prediction": prediction,
-        }
-        return skill4re_result, stage_outputs, final_relations, relation_batches
+        skill4re_result["stage_timing"] = dict(skill4re_result["timing"])
+        stage_outputs = {"timing": dict(skill4re_result["timing"]), "requests": skill4re_result["requests"]}
+        publish_stage(redis, task_id, {"phase": "extraction_finished", "relation_count": len(skill4re_result["relations"]), "entity_count": len(skill4re_result["entities"])})
+        return skill4re_result, stage_outputs, skill4re_result["relations"], relation_batches
+
+
+def _typed_sources_and_batches(document_text, batches, page_texts, max_tokens, ocr_pages=None):
+    cleaned = _strip_markdown_image_content(document_text)
+    batches = [{**batch, "source_ids": []} for batch in batches]
+    sources = []
+    matches = SequenceMatcher(None, document_text, cleaned, autojunk=False).get_matching_blocks()
+    for match in matches:
+        if match.size == 0:
+            continue
+        position = match.a
+        for line in document_text[match.a:match.a + match.size].splitlines(keepends=True):
+            line_start = position
+            position += len(line)
+            cursor = 0
+            for text in _hard_split_text(line, max_tokens):
+                relative = line.find(text, cursor)
+                if relative < 0:
+                    raise ValueError("来源片段未在原文中找到")
+                cursor = relative + len(text)
+                start = line_start + relative
+                pages = [page for page, content in page_texts if text in content]
+                blocks = [(page.page_index, block.get("global_block_id", block.get("block_id")))
+                          for page in ocr_pages or [] for block in page.pruned_result.get("blocks", [])
+                          if text in block.get("block_content", "")]
+                block = blocks[0] if len(blocks) == 1 else None
+                containing = [batch for batch in batches if text in batch["text"] or _strip_markdown_heading_prefix(text) in batch["text"]]
+                section_ids = {value for batch in containing for value in batch["section_ids"]}
+                source = {"source_id": f"source_{len(sources) + 1:06d}", "text": text, "start": start, "end": start + len(text),
+                          "page": block[0] if block else pages[0] if len(pages) == 1 else None,
+                          "section_id": next(iter(section_ids)) if len(section_ids) == 1 else None,
+                          "block_id": block[1] if block else None, "batch_index": containing[0]["batch_index"] if containing else None}
+                sources.append(source)
+                if containing:
+                    containing[0]["source_ids"].append(source["source_id"])
+                else:
+                    batches.append({"batch_index": len(batches), "split_mode": "source", "section_ids": [],
+                                    "parent_title": "", "page_start": source["page"], "page_end": source["page"], "block_ids": [],
+                                    "estimated_tokens": _estimate_relation_tokens(text), "text": text, "source_ids": [source["source_id"]]})
+                    source["batch_index"] = len(batches) - 1
+    batches = [batch for batch in batches if batch["source_ids"]]
+    source_map = {item["source_id"]: item for item in sources}
+    batches.sort(key=lambda batch: min(source_map[value]["start"] for value in batch["source_ids"]))
+    for index, batch in enumerate(batches):
+        batch["batch_index"] = index
+        for value in batch["source_ids"]:
+            source_map[value]["batch_index"] = index
+    originals = [dict(source) for source in sources]
+    for source, following in zip(sources, originals[1:]):
+        gap = document_text[source["end"]:following["start"]]
+        if page_texts or source["section_id"] != following["section_id"] or (gap and not gap.isspace()):
+            continue
+        source["end"] = following["end"]
+        source["text"] = document_text[source["start"]:source["end"]]
+        if source["page"] != following["page"]:
+            source["page"] = None
+            source["block_id"] = None
+        if source["block_id"] != following["block_id"]:
+            source["block_id"] = None
+    # 保留相邻批次的原文上下文，帮助识别简称和指代。
+    previous = None
+    for batch in batches:
+        current_last = batch["source_ids"][-1]
+        if previous is not None and previous not in batch["source_ids"]:
+            batch["source_ids"].insert(0, previous)
+        previous = current_last
+    return sources, batches
 
 
 def bootstrap_pipeline(config: AppConfig, model_settings_store: ModelSettingsStore | None = None) -> DocumentPipeline:
@@ -1232,11 +1238,11 @@ def _result_file_paths(result_dir: Path) -> dict[str, str]:
     }
 
 
-def _save_result_files(result_dir: Path, result: dict[str, Any]) -> None:
+def _save_result_files(result_dir: Path, result: dict[str, Any], *, ocr_restructured=None) -> None:
     result_dir.mkdir(parents=True, exist_ok=True)
     (result_dir / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     (result_dir / "document_text.md").write_text(str(result.get("document_text") or "").strip() + "\n", encoding="utf-8")
-    ocr_restructured = result.get("ocr_restructured") if isinstance(result.get("ocr_restructured"), dict) else {}
+    ocr_restructured = ocr_restructured if ocr_restructured is not None else result.get("ocr_restructured", {})
     paragraphs = ocr_restructured.get("layout_parsing_results") if isinstance(ocr_restructured, dict) else []
     (result_dir / "ocr_paragraphs.json").write_text(
         json.dumps(paragraphs if isinstance(paragraphs, list) else [], ensure_ascii=False, indent=2),

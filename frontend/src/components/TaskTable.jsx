@@ -70,7 +70,8 @@ function TaskListItem({ task, active, onSelect, onAction }) {
     runAction(action);
   }
   const config = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知", stage: task.stage || "处理中" };
-  const stage = task.stage && task.stage !== task.status ? task.stage : config.stage;
+  const stageLabels = { queued: "等待任务调度", layout_parsing: "版面解析", restructure_pages: "文档重构", entity_recognition: "实体识别", entity_merge: "实体归并", relation_extraction: "关系抽取", document_merge: "结果合并", completed: "处理完成", cancelled: "已取消", failed: "处理失败" };
+  const stage = stageLabels[task.stage] || config.stage;
   return (
     <div className={`task-list-item ${active ? "is-active" : ""}`}>
       <button type="button" className="task-select" title={task.filename} aria-label={`查看任务：${task.filename}`} aria-pressed={active} onClick={() => onSelect(task.task_id)} />

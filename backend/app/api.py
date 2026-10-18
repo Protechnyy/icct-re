@@ -11,12 +11,14 @@ from urllib.parse import quote, urlsplit
 from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 from redis.exceptions import ConnectionError as RedisConnectionError
+from skill4re.extraction_schema import ExtractionValidationError, RELATION_NAMES, public_result
 
 from .config import AppConfig, RELATION_SPLIT_MODES
 from .llm_stream import decode_entry, publish_done, stream_key
 from .model_settings import ModelSettingsError, ModelSettingsStore, main_model_settings_defaults
 from .paddle_ocr import PaddleOcrClient
-from .skill_store import SkillStore, SkillStoreError
+from .extraction_schema_store import ExtractionSchemaConflict, ExtractionSchemaStore
+from .extraction_export import entities_to_csv, typed_relations_to_csv
 from .task_store import RedisTaskStore
 from .types import TaskStatus
 from .utils import TEXT_FILE_TYPE, detect_file_type, ensure_supported_file_suffix, generate_task_id, safe_filename, utcnow_iso
@@ -47,7 +49,11 @@ def create_app(config: AppConfig | None = None) -> Flask:
     ocr_client = PaddleOcrClient(config)
     model_settings_store = ModelSettingsStore(config.storage_root)
     vllm_client = VllmClient(config, settings_store=model_settings_store)
-    skill_store = SkillStore(config)
+    extraction_schema_store = ExtractionSchemaStore(config.storage_root)
+
+    @app.errorhandler(ExtractionValidationError)
+    def extraction_validation_error(exc):
+        return jsonify({"error": str(exc), "path": exc.path}), 409 if isinstance(exc, ExtractionSchemaConflict) else 400
 
     LOGGER.info("API config loaded: %s", config.safe_summary())
 
@@ -139,7 +145,20 @@ def create_app(config: AppConfig | None = None) -> Flask:
             if not task:
                 return jsonify({"error": "Task not found"}), 404
             return jsonify({"error": "Result not ready"}), 409
-        return jsonify(result_payload), 200
+        return jsonify(public_result(result_payload)), 200
+
+    @app.get("/api/tasks/<task_id>/preview")
+    def task_preview(task_id: str) -> tuple[object, int]:
+        task = task_store.get_task(task_id)
+        if task is None:
+            return jsonify({"error": "Task not found"}), 404
+        preview = task_store.get_preview(task_id)
+        if preview is not None:
+            return jsonify(preview), 200
+        saved = task_store.get_result(task_id) if task["status"] == "succeeded" else None
+        if saved is not None and saved.get("document_text"):
+            return jsonify({"task_id": task_id, "document_text": saved["document_text"]}), 200
+        return jsonify({"error": "文档预览尚未就绪"}), 409
 
     @app.get("/api/tasks/<task_id>/stream")
     def task_stream(task_id: str) -> Response | tuple[object, int]:
@@ -196,6 +215,20 @@ def create_app(config: AppConfig | None = None) -> Flask:
         response.headers["Content-Disposition"] = (
             f'attachment; filename="relations.csv"; filename*=UTF-8\'\'{quote(download_name)}'
         )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/api/result/<task_id>/entities.csv")
+    def result_entities_csv(task_id):
+        task = task_store.get_task(task_id)
+        if task is None:
+            return jsonify({"error": "Task not found"}), 404
+        result_payload = task_store.get_result(task_id)
+        if result_payload is None:
+            return jsonify({"error": "Result not ready"}), 409
+        filename = Path(str(task.get("filename") or task_id)).stem + "_entities.csv"
+        response = Response(entities_to_csv(result_payload), content_type="text/csv; charset=utf-8")
+        response.headers["Content-Disposition"] = f"attachment; filename=entities.csv; filename*=UTF-8''{quote(filename)}"
         response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -275,46 +308,20 @@ def create_app(config: AppConfig | None = None) -> Flask:
             "api_key_configured": settings.api_key_configured,
         }), 200
 
-    @app.get("/api/skills")
-    def list_skills() -> tuple[object, int]:
-        try:
-            skills = skill_store.list_skills()
-        except SkillStoreError as exc:
-            return jsonify({"error": str(exc)}), 400
-        return jsonify({"skills": skills, "skills_dir": str(config.skill4re_skills_dir)}), 200
+    @app.get("/api/settings/extraction-schema")
+    def get_extraction_schema():
+        return jsonify(extraction_schema_store.get())
 
-    @app.get("/api/skills/<skill_name>")
-    def get_skill(skill_name: str) -> tuple[object, int]:
-        try:
-            return jsonify(skill_store.get_skill(skill_name)), 200
-        except FileNotFoundError:
-            return jsonify({"error": "Skill not found"}), 404
-        except SkillStoreError as exc:
-            return jsonify({"error": str(exc)}), 400
+    @app.put("/api/settings/extraction-schema")
+    def update_extraction_schema():
+        if not _model_settings_write_allowed():
+            return jsonify({"error": "请从工作台页面保存抽取配置"}), 403
+        return jsonify(extraction_schema_store.save(request.get_json()))
 
-    @app.post("/api/skills")
-    def create_skill() -> tuple[object, int]:
-        payload = request.get_json(silent=True)
-        try:
-            created = skill_store.create_skill(payload if isinstance(payload, dict) else {})
-        except FileExistsError as exc:
-            return jsonify({"error": str(exc)}), 409
-        except SkillStoreError as exc:
-            return jsonify({"error": str(exc)}), 400
-        return jsonify(created), 201
-
-    @app.put("/api/skills/<skill_name>")
-    def update_skill(skill_name: str) -> tuple[object, int]:
-        payload = request.get_json(silent=True)
-        try:
-            updated = skill_store.update_skill(skill_name, payload if isinstance(payload, dict) else {})
-        except FileNotFoundError:
-            return jsonify({"error": "Skill not found"}), 404
-        except FileExistsError as exc:
-            return jsonify({"error": str(exc)}), 409
-        except SkillStoreError as exc:
-            return jsonify({"error": str(exc)}), 400
-        return jsonify(updated), 200
+    @app.route("/api/skills", methods=["GET", "POST", "PUT", "DELETE"])
+    @app.route("/api/skills/<path:skill_name>", methods=["GET", "POST", "PUT", "DELETE"])
+    def retired_skills(skill_name=None):
+        return jsonify({"error": "请使用抽取配置管理实体类型与关系", "replacement": "/api/settings/extraction-schema"}), 410
 
     return app
 
@@ -341,17 +348,12 @@ CSV_COLUMNS = (
     "主体",
     "关系",
     "客体",
-    "证据",
-    "Skill",
-    "来源章节",
-    "来源页码",
-    "来源块",
-    "来源段落",
-    "来源批次",
 )
 
 
 def _relations_to_csv(result_payload: dict[str, object]) -> str:
+    if "result_schema_version" in result_payload:
+        return typed_relations_to_csv(result_payload)
     relation_container = result_payload.get("final_relation_list")
     if isinstance(relation_container, dict):
         relations = relation_container.get("relation_list", [])
@@ -369,34 +371,11 @@ def _relations_to_csv(result_payload: dict[str, object]) -> str:
         writer.writerow(
             {
                 "主体": _csv_text(relation.get("head") or relation.get("subject")),
-                "关系": _csv_text(relation.get("relation")),
+                    "关系": _csv_text(RELATION_NAMES.get(relation.get("relation"), relation.get("relation"))),
                 "客体": _csv_text(relation.get("tail") or relation.get("object")),
-                "证据": _csv_text(relation.get("evidence")),
-                "Skill": _csv_text(relation.get("skill")),
-                "来源章节": _csv_list(relation.get("source_sections")),
-                "来源页码": _csv_list(relation.get("source_pages")),
-                "来源块": _csv_list(relation.get("source_blocks")),
-                "来源段落": _csv_paragraphs(relation.get("source_paragraphs")),
-                "来源批次": _csv_text(relation.get("source_batch_index")),
             }
         )
     return "\ufeff" + output.getvalue()
-
-
-def _csv_list(value: object) -> str:
-    values = value if isinstance(value, list) else ([] if value in (None, "") else [value])
-    return "、".join(_csv_text(item) for item in values)
-
-
-def _csv_paragraphs(value: object) -> str:
-    if not isinstance(value, list):
-        return ""
-    contents = [
-        _csv_text(item.get("content"))
-        for item in value
-        if isinstance(item, dict) and item.get("content") not in (None, "")
-    ]
-    return "\n\n".join(contents)
 
 
 def _csv_text(value: object) -> str:

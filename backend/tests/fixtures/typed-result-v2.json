@@ -1,0 +1,19 @@
+{
+  "result_schema_version": 2,
+  "document_text": "联合指挥所甲为指挥机构，位于乙港。",
+  "extraction_schema": {
+    "schema_version": 1,
+    "revision": 1,
+    "entity_types": [{"id": "command_organization", "name": "指挥机构", "description": "原文明确承担指挥职责的机构。", "parent_id": null, "examples": []}],
+    "relation_types": [{"id": "command", "name": "指挥关系", "description": "指挥方对被指挥方实施指挥。", "enabled": true, "symmetric": false, "allowed_pairs": [{"head_type_id": "command_organization", "tail_type_id": "command_organization"}], "examples": []}]
+  },
+  "entities": [{
+    "entity_id": "entity_000001",
+    "name": "联合指挥所甲",
+    "type_ids": ["command_organization"],
+    "type_assertions": [{"type_id": "command_organization", "evidence": [{"text": "联合指挥所甲为指挥机构", "source_id": "source_000001", "start": 0, "end": 11, "page": null, "section_id": null, "block_id": null, "batch_index": 0}]}],
+    "aliases": [],
+    "mentions": [{"text": "联合指挥所甲", "source_id": "source_000001", "start": 0, "end": 6, "page": null, "section_id": null, "block_id": null, "batch_index": 0}]
+  }],
+  "relations": []
+}

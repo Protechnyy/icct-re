@@ -73,6 +73,7 @@ class TaskStatus:
     stage: str
     error: str | None = None
     result_ready: bool = False
+    preview_ready: bool = False
     created_at: str | None = None
     updated_at: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

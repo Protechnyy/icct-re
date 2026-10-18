@@ -128,6 +128,7 @@ class AppConfig:
     llm_retry_backoff_seconds: float = 2.0
     stream_enabled: bool = True
     stream_thinking: bool = True
+    extraction_max_request_tokens: int = 65536
 
     @classmethod
     def from_env(cls, env_path: Path | None = None) -> "AppConfig":
@@ -218,6 +219,7 @@ class AppConfig:
             ),
             stream_enabled=_as_bool(os.getenv("STREAM_ENABLED"), True),
             stream_thinking=_as_bool(os.getenv("STREAM_THINKING"), True),
+            extraction_max_request_tokens=_positive_int("EXTRACTION_MAX_REQUEST_TOKENS", 65536),
         )
 
     def ensure_storage_dirs(self) -> None:

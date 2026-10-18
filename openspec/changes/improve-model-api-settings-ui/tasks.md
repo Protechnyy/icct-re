@@ -33,7 +33,7 @@
 ## 验证记录
 
 - 前端：`npm run build` 通过。
-- 后端：`python -m pytest -q tests/test_llm_url_config.py tests/test_skill4re_client.py`，8 项通过。
+- 后端：`python -m pytest -q tests/test_shared_llm_configuration.py tests/test_skill4re_client.py`。
 - 接口与模型服务：独立临时存储的真实 API 通过读取、自定义名称保存、省略模型保留、清空恢复默认、Key 保留、无 Key 保存和无效 URL 拒绝检查；项目当前 Qwen 服务通过默认与可用自定义模型名称的健康、快速抽取和常规抽取请求。
 - 界面：通过真实本地 API 和浏览器 DOM、网络及键盘检查加载重试、旧请求隔离、Key 取消、URL 校验、重复提交阻止、错误保留、关闭确认、焦点管理，以及 320px、768px 和桌面布局。
 - OpenSpec：`openspec validate improve-model-api-settings-ui --strict --no-interactive` 通过。

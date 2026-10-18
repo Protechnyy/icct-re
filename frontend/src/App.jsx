@@ -12,11 +12,11 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import ResultEmptyState from "./components/ResultEmptyState";
 import TaskTable from "./components/TaskTable";
 import UploadPanel from "./components/UploadPanel";
-import { cancelTask, exportTaskCsv, getTaskResult, getTaskStatus, refreshTaskStatus, uploadFiles } from "./lib/api";
+import { cancelTask, exportTaskCsv, getTaskPreview, getTaskResult, getTaskStatus, refreshTaskStatus, uploadFiles } from "./lib/api";
 
 const terminalStatuses = ["succeeded", "failed", "cancelled"];
 const ResultViewer = lazy(() => import("./components/ResultViewer"));
-const SkillManager = lazy(() => import("./components/SkillManager"));
+const ExtractionSchemaManager = lazy(() => import("./components/ExtractionSchemaManager"));
 const ModelSettings = lazy(() => import("./components/ModelSettings"));
 
 function ModelKeyIcon() {
@@ -48,6 +48,9 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [results, setResults] = useState({});
+  const [previews, setPreviews] = useState({});
+  const [previewError, setPreviewError] = useState("");
+  const [previewRetry, setPreviewRetry] = useState(0);
   const [workspaceTaskIds, setWorkspaceTaskIds] = useState(readWorkspaceTaskIds);
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState("");
@@ -63,6 +66,8 @@ export default function App() {
   tasksRef.current = tasks;
   const resultsRef = useRef(results);
   resultsRef.current = results;
+  const previewsRef = useRef(previews);
+  previewsRef.current = previews;
   const workspaceTaskIdsRef = useRef(workspaceTaskIds);
   workspaceTaskIdsRef.current = workspaceTaskIds;
   const restorationRunRef = useRef(0);
@@ -135,6 +140,20 @@ export default function App() {
     return () => { cancelled = true; };
   }, [activeTask?.task_id, activeTask?.status, resultRetry]);
 
+  useEffect(() => {
+    setPreviewError("");
+    if (!activeTask?.preview_ready || resultsRef.current[activeTask.task_id] || previewsRef.current[activeTask.task_id]) return;
+    let cancelled = false;
+    getTaskPreview(activeTask.task_id)
+      .then((preview) => {
+        if (!cancelled) setPreviews((current) => ({ ...current, [activeTask.task_id]: preview }));
+      })
+      .catch((error) => {
+        if (!cancelled) setPreviewError(String(error.message || error));
+      });
+    return () => { cancelled = true; };
+  }, [activeTask?.task_id, activeTask?.preview_ready, previewRetry]);
+
   async function submitFiles(rawFiles) {
     if (!rawFiles.length || submitting) return;
     try {
@@ -206,6 +225,11 @@ export default function App() {
           delete next[taskId];
           return next;
         });
+        setPreviews((current) => {
+          const next = { ...current };
+          delete next[taskId];
+          return next;
+        });
         setActiveTaskId((current) => current === taskId ? remaining[0]?.task_id || null : current);
         Message.success("已从列表移除，服务器文件保留");
       }
@@ -230,7 +254,7 @@ export default function App() {
         </div>
         <nav className="header-nav" aria-label="主导航">
           <Button type={view === "tasks" ? "secondary" : "text"} aria-current={view === "tasks" ? "page" : undefined} icon={<IconApps />} onClick={() => setView("tasks")}>任务中心</Button>
-          <Button type={view === "skills" ? "secondary" : "text"} aria-current={view === "skills" ? "page" : undefined} icon={<IconRobot />} onClick={() => setView("skills")}>Skills</Button>
+          <Button type={view === "schema" ? "secondary" : "text"} aria-current={view === "schema" ? "page" : undefined} icon={<IconRobot />} onClick={() => setView("schema")}>抽取配置</Button>
         </nav>
         <div className="header-actions">
           <Tooltip content="设置公共模型 API Key、请求地址和模型名称">
@@ -252,8 +276,8 @@ export default function App() {
         </div>
       </header>
       <main className="app-content">
-        {view === "skills" ? (
-          <Suspense fallback={<div className="page-loading" role="status"><Spin />正在加载 Skills…</div>}><SkillManager /></Suspense>
+        {view === "schema" ? (
+          <Suspense fallback={<div className="page-loading" role="status"><Spin />正在加载抽取配置…</div>}><ExtractionSchemaManager /></Suspense>
         ) : (
           <>
             {restoring && <div className="workspace-loading" role="status">正在恢复任务记录…</div>}
@@ -273,7 +297,7 @@ export default function App() {
               </aside>
               <section className="workbench-main">
                 {activeTask ? <Suspense fallback={<div className="result-loading" role="status"><Spin />正在加载抽取结果…</div>}>
-                  <ResultViewer task={activeTask} result={activeTaskId ? results[activeTaskId] : null} resultError={resultError} onRetryResult={() => setResultRetry((current) => current + 1)} />
+                  <ResultViewer key={activeTaskId} task={activeTask} result={activeTaskId ? results[activeTaskId] : null} resultError={resultError} onRetryResult={() => setResultRetry((current) => current + 1)} preview={previews[activeTaskId]} previewError={previewError} onRetryPreview={() => setPreviewRetry((current) => current + 1)} />
                 </Suspense> : <ResultEmptyState />}
               </section>
             </div>

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "entity_types": [
+    {"id": "command_organization", "name": "指挥机构", "description": "原文明确承担作战指挥、组织或控制职责的指挥机构、指挥部或指挥所。保留机构的具体名称。", "parent_id": null, "examples": [{"text": "联合指挥所负责统一指挥。", "entity_name": "联合指挥所", "type_id": "command_organization", "evidence": "联合指挥所负责统一指挥。"}]},
+    {"id": "forward_detachment", "name": "前出分队", "description": "原文明确称为前出分队或说明作为分队前出执行任务的组织。", "parent_id": null, "examples": [{"text": "前出分队甲执行警戒任务。", "entity_name": "前出分队甲", "type_id": "forward_detachment", "evidence": "前出分队甲执行警戒任务。"}]},
+    {"id": "weapon_platform", "name": "武器平台", "description": "原文中的具体武器平台或打击力量。能确认水面、水下、空中或长导打击力量时使用对应子类型，仅能确认武器平台时使用本类型。", "parent_id": null, "examples": [{"text": "武器平台甲进入待命状态。", "entity_name": "武器平台甲", "type_id": "weapon_platform", "evidence": "武器平台甲进入待命状态。"}]},
+    {"id": "reconnaissance_platform", "name": "侦查平台", "description": "原文明确承担侦查、侦察、探测或情报获取任务的具体平台。名称保持原文表述。", "parent_id": null, "examples": [{"text": "侦查平台甲向联合指挥所提供情报。", "entity_name": "侦查平台甲", "type_id": "reconnaissance_platform", "evidence": "侦查平台甲向联合指挥所提供情报。"}]},
+    {"id": "surface_strike_force", "name": "水面打击力量", "description": "原文明确属于水面打击力量的具体舰艇、平台或编组。", "parent_id": "weapon_platform", "examples": [{"text": "水面打击力量甲保持待命。", "entity_name": "水面打击力量甲", "type_id": "surface_strike_force", "evidence": "水面打击力量甲保持待命。"}]},
+    {"id": "subsurface_strike_force", "name": "水下打击力量", "description": "原文明确属于水下打击力量的具体潜艇、平台或编组。", "parent_id": "weapon_platform", "examples": [{"text": "水下打击力量甲保持待命。", "entity_name": "水下打击力量甲", "type_id": "subsurface_strike_force", "evidence": "水下打击力量甲保持待命。"}]},
+    {"id": "air_strike_force", "name": "空中打击力量", "description": "原文明确属于空中打击力量的具体航空器、平台或编组。", "parent_id": "weapon_platform", "examples": [{"text": "空中打击力量甲保持待命。", "entity_name": "空中打击力量甲", "type_id": "air_strike_force", "evidence": "空中打击力量甲保持待命。"}]},
+    {"id": "long_range_missile_strike_force", "name": "长导打击力量", "description": "原文明确属于长导打击力量的具体平台或编组。", "parent_id": "weapon_platform", "examples": [{"text": "长导打击力量甲保持待命。", "entity_name": "长导打击力量甲", "type_id": "long_range_missile_strike_force", "evidence": "长导打击力量甲保持待命。"}]}
+  ],
+  "relation_types": [
+    {"id": "command", "name": "指挥", "description": "原文明确记载头实体对尾实体实施指挥、节制或指挥控制。头实体为指挥机构，关系从指挥方指向被指挥方。仅有共同任务或共同出现不构成指挥关系。", "enabled": true, "symmetric": false, "allowed_pairs": [{"head_type_id": "command_organization", "tail_type_id": "command_organization"}, {"head_type_id": "command_organization", "tail_type_id": "forward_detachment"}, {"head_type_id": "command_organization", "tail_type_id": "weapon_platform"}], "examples": [{"text": "联合指挥所统一指挥前出分队甲。", "head": "联合指挥所", "tail": "前出分队甲", "head_type_id": "command_organization", "tail_type_id": "forward_detachment", "evidence": "联合指挥所统一指挥前出分队甲。"}]},
+    {"id": "coordination", "name": "协同", "description": "原文明确记载两个指挥机构之间或两个武器平台之间具有协同、配合或联合协调联系。关系对称，各武器平台子类型之间允许协同。共同出现不构成协同关系。", "enabled": true, "symmetric": true, "allowed_pairs": [{"head_type_id": "command_organization", "tail_type_id": "command_organization"}, {"head_type_id": "weapon_platform", "tail_type_id": "weapon_platform"}], "examples": [{"text": "水面打击力量甲与空中打击力量乙协同。", "head": "水面打击力量甲", "tail": "空中打击力量乙", "head_type_id": "surface_strike_force", "tail_type_id": "air_strike_force", "evidence": "水面打击力量甲与空中打击力量乙协同。"}]},
+    {"id": "intelligence_support", "name": "情报保障", "description": "原文明确记载侦查平台向指挥机构提供、回传或保障情报。关系从提供情报的平台指向接收情报的指挥机构。", "enabled": true, "symmetric": false, "allowed_pairs": [{"head_type_id": "reconnaissance_platform", "tail_type_id": "command_organization"}], "examples": [{"text": "侦查平台甲向联合指挥所提供情报。", "head": "侦查平台甲", "tail": "联合指挥所", "head_type_id": "reconnaissance_platform", "tail_type_id": "command_organization", "evidence": "侦查平台甲向联合指挥所提供情报。"}]}
+  ]
+}

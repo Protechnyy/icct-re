@@ -1,334 +1,113 @@
 # ICCT-RE 项目说明
-## 1. 项目简介
 
-ICCT-RE 是一个文档级关系抽取工作台：上传 PDF 或图片，PaddleOCR-VL 解析版面并重构文字，Skill4RE 根据文档内容选择领域 skill，调用兼容 OpenAI 接口的大模型抽取有原文证据的关系，最后展示并保存结果。当前内置军事、金融、法律、医疗、科技 5 个领域 skill。
+## 输入与处理流程
 
-处理链路：**文件上传 → Redis 任务队列 → Worker → OCR 与文档重构 → 分批关系抽取 → 结果合并与保存**。
+ICCT-RE 接收 PDF、图片、TXT 和 Markdown 文档，抽取网页配置范围内的全部实体及具有原文证据的指定关系。PDF 和图片通过 PaddleOCR-VL 解析；TXT 和 Markdown 直接读取文本。
 
-## 2. 输入与输出
+处理流程为：文件上传、Redis 排队、读取文档配置、取得原文、全文实体识别、实体归并、按原文批次抽取关系、程序校验、结果合并和保存。
 
-**输入**：通过网页上传，或向 `POST /api/upload` 发送 `multipart/form-data`。文件字段名为 `files`，可一次上传多个文件；后端支持 `.pdf`、`.jpg`、`.jpeg`、`.png`、`.bmp`、`.webp`。网页文件选择器列出 PDF、PNG、JPG、JPEG。可选表单字段 `split_mode` 控制关系抽取粒度，默认 `small_section`（按小节）；还支持 `chapter`、`paragraph`、`fixed_sections`。`batch_size` 等细节参数见 `backend/.env.example`。
+原文中的指令作为待抽取资料处理。原文引用在处理期间用于身份判断和字段校验；抽取服务向结果流程返回独立的业务结构。
 
-**上传响应**：HTTP 202，按文件返回任务 ID，例如：
+## 网页抽取配置
 
-```json
-{
-  "tasks": [
-    {"task_id": "示例任务ID", "filename": "报告.pdf", "status": "queued", "progress": 0, "stage": "queued"}
-  ]
-}
-```
+在顶部“抽取配置”中维护“实体类型”和“关系类型”。完整字段说明见 [抽取配置与结果](extraction-schema.md)。
 
-**任务结果**：任务完成后，`GET /api/result/<task_id>` 返回包含 `document_meta`、`ocr_summary`、`document_text`、`final_relation_list`、`saved_paths` 等字段的 JSON。核心关系格式如下（示意数据）：
+- 实体类型维护名称、定义、父类型及原文识别示例。名称可以修改，类型 ID 保持不变。
+- 关系类型维护名称、定义、启用状态、对称性、头尾类型组合及原文示例。
+- 每条组合分别选择头实体类型和尾实体类型。引用父类型时，包括其全部后代类型。
+- 修改后使用“保存配置”。保存版本冲突时保留当前输入，可以重新读取配置后继续编辑。
+- 仍被关系或子类型引用的实体类型需要处理引用后才能删除。
 
-```json
-{
-  "final_relation_list": {
-    "relation_list": [
-      {
-        "head": "第一机步营",
-        "relation": "集结于",
-        "tail": "西侧集结区",
-        "evidence": "第一机步营在西侧集结区集结",
-        "skill": "military",
-        "source_sections": ["1.1"],
-        "source_pages": [],
-        "source_blocks": [],
-        "source_paragraphs": [],
-        "source_batch_index": 0
-      }
-    ]
-  }
-}
-```
+默认关系如下：
 
-其中 `head`、`relation`、`tail` 是关系三元组，`evidence` 是原文证据，`skill` 是使用的领域技能。来源章节、页码、块和段落由后处理关联；无法定位时可能为空。完整响应还包含 OCR 和分批处理信息。结果同时写入 `data/results/<task_id>/`：`result.json`（完整结果）、`document_text.md`（重构文本）、`ocr_paragraphs.json`（OCR 段落）。`GET /api/result/<task_id>/csv` 可下载关系 CSV。
+| 关系 | 方向 | 允许组合 |
+| --- | --- | --- |
+| 指挥 | 从指挥方指向被指挥方 | 指挥机构与指挥机构、前出分队或武器平台 |
+| 协同 | 对称 | 指挥机构与指挥机构；武器平台与武器平台 |
+| 情报保障 | 从情报提供方指向接收方 | 侦查平台与指挥机构 |
 
-## 3. 部署与启动
+武器平台包括水面打击力量、水下打击力量、空中打击力量和长导打击力量。识别具体子类型需要原文依据；仅能确认父类型时保留父类型。同一实体可以保存多个有原文依据的角色类型。
 
-以下是仓库当前的开发环境启动方式。需要 Python、Node.js 18+、Redis、PaddleOCR-VL 服务，以及一个可用的 OpenAI 兼容关系抽取模型接口；OCR 服务按当前 README 示例需要 GPU。Redis 默认地址为 `localhost:6379`，OCR 默认地址为 `http://127.0.0.1:8118/v1`。若从零启动依赖服务，可参考当前仓库使用的容器命令：
+实体范围是启用关系涉及的类型及其后代类型。没有参与关系的符合类型要求的实体也进入结果。类型组合符合要求之后，还需要原文证明关系成立。
 
-```bash
-docker run -d --name docre-redis --restart unless-stopped \
-  -p 6379:6379 m.daocloud.io/docker.io/library/redis:7
+## 配置保存与模型设置
 
-docker run -d --name docre-paddleocr --restart unless-stopped \
-  --gpus all --network host -e PADDLE_PDX_MODEL_SOURCE=BOS \
-  ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddlex-genai-vllm-server:latest \
-  paddlex_genai_server --model_name PaddleOCR-VL-1.6-0.9B \
-  --host 0.0.0.0 --port 8118 --backend vllm
-```
+抽取配置保存在 `STORAGE_ROOT/settings/extraction-schema.json`，包含格式版本 `schema_version` 和保存版本 `revision`。首次使用初始化默认配置；保存使用跨进程文件锁及同目录原子替换。配置损坏会报告错误。
 
-在仓库根目录准备后端环境：
+模型设置维护公共服务地址、Key 和模型名称；实体识别、归并、关系抽取及校对共用 `LLM_*` 配置。Key 留空保留已有值，模型名称留空恢复默认。
 
-```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-cd ..
-```
+Worker 开始处理文档、调用 OCR 或模型之前读取一次完整模型设置和抽取配置。排队期间的修改在开始处理时生效；进行中文档保持其配置快照。任务结果保存完整抽取配置及公开模型摘要。
 
-编辑 `backend/.env`，核对 `REDIS_URL`、`PADDLE_OCR_SERVER_URL` 及公共 `LLM_BACKEND`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`。地址支持兼容接口的 `/v1` 或完整 `/v1/chat/completions` 地址。关系抽取和 skills 路由共用模型连接，每篇文档开始处理时读取一次配置，全部 batch 共用该快照。前端保存的设置对后续开始处理的文档生效。名称迁移及完整配置见 README。
+## 抽取粒度与请求容量
 
-依赖服务就绪后，从仓库根目录分别启动：
+上传表单的 `split_mode` 支持 `small_section`、`chapter`、`paragraph`、`fixed_sections`。`batch_size` 及相应阶段参数控制原文分组，`RELATION_MAX_BATCH_TOKENS` 控制文本批次大小，`RELATION_BATCH_CONCURRENCY` 控制并发请求。
 
-```bash
-./scripts/start-backend.sh
-```
+关系抽取使用全文实体登记表，能够引用前文定义的实体。登记表超过请求容量时，按允许类型组合对候选分组，完整覆盖合法候选。每次请求保留相应原文和身份依据。`EXTRACTION_MAX_REQUEST_TOKENS` 包含输入及预留输出；单个必要输入无法容纳、模型输出截断、JSON 或引用不合法时，任务报告明确错误。
 
-```bash
-./scripts/start-frontend.sh
-```
+## 实体与关系结果
 
-前一个脚本同时启动 Flask API 与 Worker；后一个脚本首次运行会安装前端依赖。访问 `http://127.0.0.1:5173`，健康检查为 `curl http://127.0.0.1:5000/api/health`。健康检查返回 `ok` 表示 Redis、OCR 和模型接口都可访问；`degraded` 表示至少一项不可用。
+新结果采用 `result_schema_version=4`，包含 `document_text`、`extraction_schema`、`entities`、`relations`、文档元信息、各阶段耗时及保存路径。
 
-## 4. 任务如何运行
+完整字段示例见 [typed-result.json](examples/typed-result.json)。示例包含独立实体，并使用文件内保存的配置；默认配置见 `skill4re/skill4re/default_extraction_schema.json`。
 
-最简单的方式是在网页上传文件，等待任务状态变为 `succeeded`，然后查看关系结果或下载 CSV。命令行也可直接调用 API：
-
-```bash
-curl -X POST http://127.0.0.1:5000/api/upload \
-  -F 'files=@/path/to/报告.pdf' \
-  -F 'split_mode=small_section'
-```
-
-从响应中复制 `task_id`，再查询：
-
-```bash
-curl http://127.0.0.1:5000/api/status/<task_id>
-curl http://127.0.0.1:5000/api/result/<task_id>
-```
-
-状态可能依次为 `queued`、`ocr_running`、`extracting`、`merging`、`succeeded`；若为 `failed`，查看状态响应的 `error` 字段。结果尚未生成时，结果接口返回 HTTP 409。
-
-## 5. Prompt 编写指南
-
-日常调整某个领域的抽取行为，编辑 `skill4re/skill4re/skills/<name>.json`（例如 `military.json`），或通过网页/`/api/skills` 接口维护。重点字段：
-
-| 字段 | 写法 |
+| 实体字段 | 含义 |
 | --- | --- |
-| `description`、`keywords` | 说明领域和触发词，用于技能路由。 |
-| `focus`、`head_prior`、`tail_prior` | 写清要关注的关系，以及主体和客体的类型。 |
-| `relation_style`、`negative_scope` | 约束关系词写法和不抽取的内容。 |
-| `extraction_rules` | 用短句写具体抽取规则，明确关系方向、拆分条件、证据要求。 |
-| `fewshot` | 给出原文片段及对应的 `relation_list` JSON，示范期望输出。 |
+| `entity_id` | 文档内唯一 ID |
+| `name` | 原文实体名称 |
+| `type_ids` | 实体类型 |
+| `aliases` | 别名名称 |
 
-例如，新增 skill 的 JSON 可从下面模板开始；`fewshot.json` 写成 JSON 对象即可：
+实体名称支持并列名称共用后缀及排版换行，模型依据原文识别完整名称，并在输出前检查名称、编号、所属和类型。
 
-```json
-{
-  "name": "equipment",
-  "description": "装备说明文档关系抽取",
-  "focus": "装备配置、用途和部署位置",
-  "head_prior": "装备或部件名称",
-  "tail_prior": "用途、位置或配套部件",
-  "relation_style": "使用短而明确的关系词，如装备、部署于、用于",
-  "negative_scope": "不抽取没有原文证据的推测",
-  "extraction_rules": ["每条关系保留原文证据", "装备与多个部件分别建立关系"],
-  "keywords": ["装备", "部件", "部署"],
-  "fewshot": [
-    {
-      "text": "甲型雷达部署于北区，用于目标探测。",
-      "json": {
-        "relation_list": [
-          {"head": "甲型雷达", "relation": "部署于", "tail": "北区", "evidence": "甲型雷达部署于北区", "skill": "equipment"},
-          {"head": "甲型雷达", "relation": "用于", "tail": "目标探测", "evidence": "用于目标探测", "skill": "equipment"}
-        ]
-      }
-    }
-  ]
-}
-```
+每条关系保存 `relation_id`、`relation_type_id`、`head_id`、`tail_id`，通过 ID 引用实体。对称关系的双向重复结果合并为一条。
 
-公共提示词模板在 `skill4re/skill4re/prompts.py`：`BASE_EXTRACTION_RULES` 是通用规则，`build_router_prompt` 控制路由提示词，`build_extraction_prompt` 组合通用规则、选中 skill 的字段和 few-shot 示例；校对与合并提示词也在该文件中。当前路由和抽取模板的开头仍写有“军事”角色描述，新增非军事领域时应同步检查这些公共模板。修改公共模板后需重启后端 Worker；skill JSON 文件变化会在后续抽取任务中重新加载。编写时尽量保证：**原文有证据、关系方向明确、关系词具体、输出符合 `relation_list` JSON 格式**。
+抽取期间的原文引用保存 Unicode code point 范围，采用左闭右开区间，供原文核验使用。抽取服务完成校验与归并后清理引用，结果保存、读取和导出依靠业务字段校验。
 
-## 6. 公共提示词
+纯文本的来源单元包含同一章节中相邻的连续原文，保留排版换行及其完整范围；OCR 来源保留可确定的页面和文本块信息。
 
-整理自当前的 `skill4re/skill4re/prompts.py`。
+## 结果审阅与导出
 
-引号和 JSON 大括号按模型实际看到的文本展示，不保留 Python 字符串的转义写法。`〈……〉` 表示运行时填入的文档、技能信息或关系结果；同一任务选中的 skill 不同，填入内容也不同。
+文档预览在原文准备完成后即可使用。PDF 和图片经过 OCR 与文档整理后发布原文，Markdown 和 TXT 直接读取并跳过 OCR。任务状态的 `preview_ready` 表示预览可用；页面通过独立接口读取原文，实体与关系继续抽取。任务切换按任务 ID 保存各自预览。
 
-### 6.1 公共抽取规则
+实体页面显示全部独立实体的名称、类型，别名显示于实体名称下方。关系页面显示两端名称与类型。显示名称来自任务保存的配置，修改全局配置不会改变已完成任务。
 
-`BASE_EXTRACTION_RULES` 会按下面的顺序进入抽取 prompt，后面再接所选 skill 的 `extraction_rules`：
+- JSON 下载保留完整结果和抽取配置快照。
+- 关系 CSV 包含关系类型、头尾实体 ID、名称和类型。
+- 实体 CSV 每个实体一行，包含 ID、名称、类型和别名。
+- CSV 使用 UTF-8 BOM，并保留公式注入保护。
+- 版本 2、版本 3 与无版本历史任务在读取时转换为业务字段，缺少类型时显示“未标注”。查看历史任务不会修改原始文件。
 
-```text
-1. 只抽取原文有明确证据支持的关系，优先保证召回，后处理会去重。
-2. 输出固定 JSON：{"relation_list":[{"head":"...","relation":"...","tail":"...","evidence":"...","skill":"..."}]}。
-3. 字段必须使用中文或原文中文短语；relation 要短、稳定、语义明确，通常 2 到 8 个字。
-4. head/tail 尽量是实体、组织、人物、设施、事件、概念或条件项，不要整句照抄原文。
-5. 一句话含多个并列对象且证据充分时，拆成多条实体关系。
-6. 不要输出摘要式泛关系，如 `X-实施-Y` `X-涉及-Y` 这类无信息量的写法。
-7. evidence 必须是原文中可定位的片段，不要改写或概括。
-8. 关系方向要自然：主动方做 head，被动方或目标做 tail。
-9. 同一实体的不同表述统一为最完整的名称（如 `该营` 统一为 `第3机械化步兵营`）。
-10. 只返回 JSON，不要 markdown，不要解释。
-11. 【重要】关系谓词要精准，避免使用过泛的词：不要用 '必须'、'关键'、'威胁'、'涉及'、'包含' 等，改用更具体的动词如 '部署于'、'装备'、'依赖'、'导致'、'保护' 等。
-12. 【重要】因果关系方向要正确：原因/条件做 head，结果/影响做 tail。例如：'基地车损毁-导致-行动中止' 而不是 '基地车-损毁于-行动失败'。
-13. 【重要】基础元信息必须抽取：文件等级、作战区域、行动代号、行动时间、参战单位等。
-```
+## 接口
 
-### 6.2 技能路由 `build_router_prompt`
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| POST | `/api/upload` | 上传文件，字段为 `files` |
+| GET | `/api/status/<task_id>` | 查询任务状态 |
+| GET | `/api/tasks/<task_id>/preview` | 获取原文预览，尚未就绪返回 409，任务不存在返回 404 |
+| POST | `/api/tasks/<task_id>/cancel` | 取消任务 |
+| GET | `/api/result/<task_id>` | 获取结果 JSON |
+| GET | `/api/result/<task_id>/csv` | 下载关系 CSV |
+| GET | `/api/result/<task_id>/entities.csv` | 下载实体 CSV |
+| GET、PUT | `/api/settings/extraction-schema` | 读取、保存整组抽取配置 |
+| GET、PUT | `/api/settings/model` | 读取、保存公共模型设置 |
+| GET | `/api/tasks/<task_id>/stream` | 订阅任务 SSE |
 
-```text
-你是一个军事文档技能路由器。请判断下面文档最适合哪些抽取 skills。
+配置 PUT 携带读取时的 `revision`。无效字段返回 400，保存版本冲突返回 409。原 `/api/skills` 地址返回 410，并给出抽取配置入口。
 
-可选 skills：
-〈每个 skill 的名称、描述、关注重点、关键词加权分数〉
+## 模型提示与任务控制
 
-要求：
-1. 必须严格使用中文分析。
-2. 只输出 JSON，不要解释，不要 markdown。
-3. 输出格式：
-{
-  "primary_skill": "skill-name",
-  "aux_skills": ["skill-name1", "skill-name2"],
-  "reason": "中文简短说明"
-}
-4. `aux_skills` 最多两个，可以为空，总技能数最多 3 个。
-5. 优先根据文档主要信息密度决定，而不是机械按关键词分数排序。
-6. 如果文档同时明显包含兵力/指挥、阶段/约束、侦察火力/敌情作用三类信息，应覆盖这些主要语义面，不要只选一个抽象技能。
+`skill4re/skill4re/typed_extraction.py` 的 `ConfiguredExtractor.prompt()` 生成实体识别、实体归并和关系抽取提示。每个原文批次识别一次实体，并在输出前逐项检查名称、类型及原文依据。服务立即执行字段、类型、来源和引用校验。
 
-文档：
-〈待路由的文档内容〉
-```
+实体身份候选按关联记录组织为批量请求，模型输出确认属于同一对象的实体分组，每条记录最多加入一个分组。关系抽取每批携带全文紧凑实体登记表，直接返回关系类型和两端实体 ID；请求 schema 根据允许类型组合限制可选 ID。处理期间根据本批次原文校验关系引用。模型请求及分组使用文档开始时的配置快照和并发设置。
 
-### 6.3 关系抽取 `build_extraction_prompt`
+日常修改类型定义与关系示例通过网页完成。公共阶段规则在代码中维护，修改代码后需要重启 Worker。阶段输出上限集中于 `skill4re/skill4re/config.py`。
 
-```text
-你是一个军事领域关系抽取系统。
+控制台显示中文阶段、批次或归并组编号，以及实际请求完成数。阶段摘要在输出折叠时保持可见。实体阶段完成后继续传递关系阶段事件，整个任务结束后发送 SSE 终止事件。取消后停止调度后续请求。
 
-你必须严格使用中文进行抽取，关系名、实体名、证据、skill 字段都必须是中文或原文中的中文短语，不要输出英文解释。
+SSE 使用 `delta` 事件传递阶段、文本和终止记录，结束时发送 `end` 事件。重连时使用 `Last-Event-ID` 或 `after_seq` 继续读取已保存事件；每个事件包含任务内的 `seq` 和独立 `stream_id`。
 
-已匹配到以下 skills：
-〈每个所选 skill 的名称、focus、head_prior、tail_prior、relation_style、negative_scope〉
+## 启动与验证
 
-few-shot 示例：
-〈从所选 skill 中挑选的原文片段和 relation_list 输出示例，最多两个 few-shot 示例；没有时为“无”〉
+环境安装、Redis、OCR 与模型服务配置见 [README](../README.md)。启动入口为 `scripts/start-backend.sh`、`scripts/start-frontend.sh`。
 
-输出要求：
-`skill` 必须从以下值中选择：〈所选 skill 名称〉。
-〈6.1 的公共抽取规则，再接所选 skill 的 extraction_rules，连续编号〉
-
-文档：
-〈待抽取的文档内容〉
-```
-
-这里的 `extraction_rules` 优先从 skill JSON 读取；只有该 skill 没有规则时，才使用 `prompts.py` 内的 `SKILL_EXTRACTION_RULES` 兜底。few-shot 示例根据文档内容与示例的相关性选择。
-
-### 6.4 结果校对 `build_proofreading_prompt`
-
-```text
-你是一个军事关系抽取结果校对器。下面给你完整文档和一批候选关系，请在一次校对中同时完成整理、纠偏和少量补漏。
-
-已选 skills：
-〈每个所选 skill 的名称、关注重点、关系词风格、不应吸收的内容〉
-
-校对要求：
-1. 默认保留原有候选关系。只有明显重复、字段缺失、证据不支持、关系词明显错误、完全摘要化且已被更具体关系覆盖时，才能删除。
-2. 不要把大量候选压缩成少量"最安全"的关系。候选能在原文中直接定位证据时，应优先保留或改写。
-3. 保留开放域关系词，不要强行改成固定标签；relation 要短、稳定、军事语义明确。
-4. 如果 `head` 或 `tail` 过长且像整句任务描述，请压缩成更短的实体、设施、线路、任务项或条件项。
-5. 如果一句候选关系其实包含多个并列对象，且文档证据充分，可以拆成多条。
-6. 如果某条关系更适合另一个已选 skill，可以改 `skill`；`skill` 只能从以下值中选择：〈所选 skill 名称〉。
-7. 可以补充少量原文中直接有证据、但候选遗漏的重要关系，重点检查：
-   - 阶段开始/结束时间
-   - 阶段任务
-   - 失败条件
-   - 对象受限关系
-   - 干扰压制对象
-   - 火力覆盖/打击对象
-   - 指挥控制链
-   - 桥梁/道路/补给线节点作用
-8. 优先保留实体之间、实体与设施/线路之间、任务项与约束条件之间的直接关系。
-9. 去掉摘要式关系，如"我方-实施-联合突击""本次行动-主要目标-压制某目标"这类可被更具体关系替代的写法。
-10. 保留阶段时间、失败条件、风险限制、敌火力/干扰作用对象等结构化信息，不要在校对时误删。
-11. 输出仍必须严格为：
-{
-  "relation_list": [
-    {
-      "head": "...",
-      "relation": "...",
-      "tail": "...",
-      "evidence": "...",
-      "skill": "..."
-    }
-  ]
-}
-12. 只输出 JSON，不要解释，不要 markdown。
-
-文档：
-〈完整文档〉
-
-候选关系：
-〈包含 relation_list 的 JSON〉
-```
-
-### 6.5 跨片段合并 `build_summarize_prompt`
-
-```text
-你是一个军事关系抽取结果合并器。下面给你同一文档不同片段的抽取结果，请做跨片段的语义合并。
-
-合并要求：
-1. 同一实体的不同表述统一为最完整的名称（如"第3营"统一为"第3机械化步兵营"）。
-2. 重复关系只保留证据最充分、表述最完整的一条。
-3. 同一实体在不同片段中的不同关系都要保留（如片段A说"第3营部署于A高地"，片段B说"第3营负责主攻"，应保留两条）。
-4. 不要新增文档中没有证据的关系。
-5. 如果某条关系的 evidence 在多个片段中都出现，保留最短的那条。
-6. skill 只能从以下值中选择：〈所选 skill 名称〉。
-7. 输出格式：
-{
-  "relation_list": [
-    {
-      "head": "...",
-      "relation": "...",
-      "tail": "...",
-      "evidence": "...",
-      "skill": "..."
-    }
-  ]
-}
-8. 只输出 JSON，不要解释，不要 markdown。
-
-文档：
-〈完整文档〉
-
-各片段抽取结果：
-〈按 chunk_index 标记的 relation_list JSON 数组〉
-```
-
-### 6.6 低置信度复核 `build_targeted_proofreading_prompt`
-
-```text
-你是一个军事关系抽取结果反思器。以下是从文档中抽取的低置信度关系，请逐条审查并修正。
-
-审查要求：
-1. 对每条关系，检查 head、relation、tail 是否在文档中有明确证据支持。
-2. 如果证据不足或关系明显错误，删除该条。
-3. 如果实体名不准确（如用了简称而非全称），修正为文档中的完整表述。
-4. 如果关系词不准确或过长，修正为更精准的短语。
-5. 如果某条实际是正确的，保留它。
-6. 不要新增文档中没有证据的关系。
-7. skill 只能从以下值中选择：〈所选 skill 名称〉。
-8. 输出格式：
-{
-  "relation_list": [
-    {
-      "head": "...",
-      "relation": "...",
-      "tail": "...",
-      "evidence": "...",
-      "skill": "..."
-    }
-  ]
-}
-9. 只输出 JSON，不要解释，不要 markdown。
-
-文档：
-〈完整文档〉
-
-低置信度关系：
-〈包含 relation_list 的 JSON〉
-```
+后端回归测试位于 `backend/tests/`，前端回归测试通过 `npm --prefix frontend test` 执行。
