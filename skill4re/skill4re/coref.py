@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple
 from openai import OpenAI
 
 from skill4re.backends import LocalQwenGenerator, generate_text, generate_text_with_requests
+from skill4re.config import max_tokens_for
 from skill4re.parsing import parse_json
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,6 @@ def resolve_coreferences(
     client: Optional[OpenAI],
     local_generator: Optional[LocalQwenGenerator],
     model: str,
-    # 部分自部署端点把隐藏的思考 token 计入 max_tokens 配额，默认值预留思考开销
-    max_tokens: int = 2200,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
     request_timeout: int = 120,
@@ -50,6 +49,7 @@ def resolve_coreferences(
     仅对长文档调用，短文档跳过以节省 LLM 调用。
     """
     prompt = build_coref_prompt(doc_text)
+    max_tokens = max_tokens_for("coref", backend)
     try:
         if client is not None or local_generator is not None:
             content = generate_text(

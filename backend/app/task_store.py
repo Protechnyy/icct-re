@@ -24,6 +24,9 @@ class RedisTaskStore:
     def _result_key(self, task_id: str) -> str:
         return f"docre:result:{task_id}"
 
+    def _cancel_key(self, task_id: str) -> str:
+        return f"docre:cancel:{task_id}"
+
     def healthcheck(self) -> bool:
         return bool(self.redis.ping())
 
@@ -45,6 +48,16 @@ class RedisTaskStore:
             return None
         _, task_id = item
         return task_id
+
+    def mark_cancel_requested(self, task_id: str) -> None:
+        # 取消标记独立存放，避免运行中的阶段更新覆盖取消请求
+        self.redis.set(self._cancel_key(task_id), "1")
+
+    def has_cancel_flag(self, task_id: str) -> bool:
+        return bool(self.redis.exists(self._cancel_key(task_id)))
+
+    def remove_from_queue(self, task_id: str) -> int:
+        return int(self.redis.lrem(TASK_QUEUE_KEY, 0, task_id))
 
     def update_task(self, task_id: str, **updates: Any) -> dict[str, Any]:
         task = self.get_task(task_id)

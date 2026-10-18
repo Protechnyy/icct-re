@@ -197,7 +197,7 @@ def generate_text(
     on_delta: Optional[Callable[[str, str, str], None]] = None,
     stream_id: str = "",
     stream_thinking: bool = False,
-    thinking_budget: int = 0,
+    reasoning_effort: str = "",
 ) -> str:
     if backend in {"openai", "api", "qwen_api"}:
         assert api_client is not None
@@ -212,8 +212,8 @@ def generate_text(
         if backend == "qwen_api":
             # DashScope 兼容模式：流式时由 STREAM_THINKING 控制，非流式保持关闭
             extra_body = {"enable_thinking": stream_thinking if stream_requested else False}
-            if stream_requested and thinking_budget > 0:
-                extra_body["thinking_budget"] = thinking_budget
+            if stream_requested and reasoning_effort:
+                extra_body["reasoning_effort"] = reasoning_effort
             request_kwargs["extra_body"] = extra_body
         if response_format is not None and backend in {"openai", "qwen_api"}:
             request_kwargs["response_format"] = response_format
@@ -354,7 +354,7 @@ def generate_text_with_requests(
     on_delta: Optional[Callable[[str, str, str], None]] = None,
     stream_id: str = "",
     stream_thinking: bool = False,
-    thinking_budget: int = 0,
+    reasoning_effort: str = "",
     max_retries: int = 3,
     retry_backoff_seconds: float = 2.0,
 ) -> str:
@@ -388,16 +388,17 @@ def generate_text_with_requests(
     if stream_requested:
         # 流式思考开关：qwen_api（DashScope 兼容端点）用顶层 enable_thinking；
         # 自部署 vllm 端点开启思考会触发不可见的隐藏思考（思考不返回、计入
-        # max_tokens 配额且不受 thinking_budget 约束，抽取类请求会被思考吃光
+        # max_tokens 配额且不受思考档位约束，抽取类请求会被思考吃光
         # 配额），统一按关闭思考请求；模型把思考混入 content 并带 </think>
         # 标识时再由 _consume_requests_stream 分流
         if backend == "qwen_api":
             data["enable_thinking"] = stream_thinking
         if backend == "vllm":
             data["chat_template_kwargs"] = {"enable_thinking": False}
-        # 思考强度：0 表示不限制，仅在流式且开启思考时下发
-        if stream_thinking and thinking_budget > 0:
-            data["thinking_budget"] = thinking_budget
+        # 思考档位：空字符串表示不下发，由服务端使用默认档；仅在流式、开启思考的
+        # qwen_api 端点下发，自部署 vllm 端点已强制关闭思考
+        if backend == "qwen_api" and stream_thinking and reasoning_effort:
+            data["reasoning_effort"] = reasoning_effort
     else:
         if backend == "qwen_api":
             data["enable_thinking"] = False

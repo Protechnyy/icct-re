@@ -10,7 +10,7 @@ export async function uploadFiles(fileList, relationOptions = {}) {
     formData.append("batch_size", String(relationOptions.batch_size));
   }
   formData.append("stream_thinking", String(relationOptions.stream_thinking !== false));
-  formData.append("thinking_budget", String(relationOptions.thinking_budget ?? 0));
+  formData.append("reasoning_effort", relationOptions.reasoning_effort ?? "high");
   const response = await fetch(`${API_BASE_URL}/upload`, {
     method: "POST",
     body: formData,
@@ -27,6 +27,15 @@ export async function getTaskStatus(taskId) {
     throw new Error(await response.text());
   }
   return response.json();
+}
+
+export async function cancelTask(taskId) {
+  const response = await fetch(`${API_BASE_URL}/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || "取消任务失败");
+  }
+  return payload;
 }
 
 export async function getAgentEvents(taskId, afterSeq = 0, signal) {

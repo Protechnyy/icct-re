@@ -25,7 +25,8 @@ class RelationExtractor(Protocol):
         on_delta: Optional[Callable[[str, str, str], None]] = ...,
         stream_prefix: str = ...,
         stream_thinking: Optional[bool] = ...,
-        thinking_budget: Optional[int] = ...,
+        reasoning_effort: Optional[str] = ...,
+        cancel_check: Optional[Callable[[], None]] = ...,
     ) -> dict[str, Any]:
         ...
 
@@ -102,7 +103,8 @@ class Skill4ReClient:
         on_delta: Optional[Callable[[str, str, str], None]] = None,
         stream_prefix: str = "",
         stream_thinking: Optional[bool] = None,
-        thinking_budget: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
+        cancel_check: Optional[Callable[[], None]] = None,
     ) -> dict[str, Any]:
         if self.settings is None:
             raise Skill4ReClientError("文档模型配置尚未绑定")
@@ -163,7 +165,8 @@ class Skill4ReClient:
             on_delta=on_delta,
             stream_prefix=stream_prefix,
             stream_thinking=stream_thinking,
-            thinking_budget=thinking_budget,
+            reasoning_effort=reasoning_effort,
+            cancel_check=cancel_check,
         )
         self.config.skill4re_route_cache_path.parent.mkdir(parents=True, exist_ok=True)
         self._save_route_cache(self.config.skill4re_route_cache_path, self.route_cache)

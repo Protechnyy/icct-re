@@ -8,6 +8,7 @@ from typing import Callable, Dict, List, Optional
 from openai import OpenAI
 
 from skill4re.backends import ROUTER_RESPONSE_FORMAT, LocalQwenGenerator, generate_text, generate_text_with_requests
+from skill4re.config import max_tokens_for
 from skill4re.models import Skill
 from skill4re.parsing import coerce_router_payload, parse_json
 from skill4re.prompts import build_router_prompt
@@ -187,14 +188,12 @@ def route_with_llm(
     on_delta: Optional[Callable[[str, str, str], None]] = None,
     stream_id: str = "",
     stream_thinking: bool = False,
-    thinking_budget: int = 0,
+    reasoning_effort: str = "",
     max_retries: int = 3,
     retry_backoff_seconds: float = 2.0,
 ) -> Dict:
     prompt = build_router_prompt(text[:3000], scores, skills)
-    # 部分自部署端点会把隐藏的思考 token 计入 max_tokens 配额（reasoning_tokens
-    # 约 458 起步且随文档变长），vllm 档需要预留思考开销
-    router_max_tokens = 160 if backend == "local_qwen3" else (1200 if backend == "vllm" else 500)
+    router_max_tokens = max_tokens_for("routing", backend)
     if client is not None or local_generator is not None:
         content = generate_text(
             prompt=prompt,
@@ -207,7 +206,7 @@ def route_with_llm(
             on_delta=on_delta,
             stream_id=stream_id,
             stream_thinking=stream_thinking,
-            thinking_budget=thinking_budget,
+            reasoning_effort=reasoning_effort,
         )
     else:
         content = generate_text_with_requests(
@@ -225,7 +224,7 @@ def route_with_llm(
             on_delta=on_delta,
             stream_id=stream_id,
             stream_thinking=stream_thinking,
-            thinking_budget=thinking_budget,
+            reasoning_effort=reasoning_effort,
         )
     parsed = coerce_router_payload(parse_json(content))
     ordered = []
@@ -262,7 +261,7 @@ def route_document(
     on_delta: Optional[Callable[[str, str, str], None]] = None,
     stream_id: str = "",
     stream_thinking: bool = False,
-    thinking_budget: int = 0,
+    reasoning_effort: str = "",
     max_retries: int = 3,
     retry_backoff_seconds: float = 2.0,
 ) -> Dict:
@@ -309,7 +308,7 @@ def route_document(
                 on_delta=on_delta,
                 stream_id=stream_id,
                 stream_thinking=stream_thinking,
-                thinking_budget=thinking_budget,
+                reasoning_effort=reasoning_effort,
             )
             router_reason = llm_route["router_reason"]
             selected = llm_route["selected"]

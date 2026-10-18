@@ -56,6 +56,14 @@ class FinalRelation(RelationTriple):
         return asdict(self)
 
 
+class TaskCancelledError(RuntimeError):
+    """用户请求取消任务，执行过程在阶段边界或批次边界终止。"""
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__(f"任务 {task_id} 已被取消")
+        self.task_id = task_id
+
+
 @dataclass
 class TaskStatus:
     task_id: str

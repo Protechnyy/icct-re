@@ -4,6 +4,7 @@ import Dropdown from "@arco-design/web-react/es/Dropdown";
 import Empty from "@arco-design/web-react/es/Empty";
 import Input from "@arco-design/web-react/es/Input";
 import Menu from "@arco-design/web-react/es/Menu";
+import Modal from "@arco-design/web-react/es/Modal";
 import Progress from "@arco-design/web-react/es/Progress";
 import Select from "@arco-design/web-react/es/Select";
 import Tag from "@arco-design/web-react/es/Tag";
@@ -46,14 +47,28 @@ function TaskListItem({ task, active, onSelect, onAction }) {
   const [busy, setBusy] = useState(false);
   const finished = ["succeeded", "failed", "cancelled"].includes(task.status);
 
-  async function handleAction(action) {
-    setMenuVisible(false);
+  async function runAction(action) {
     setBusy(true);
     try {
       await onAction(action, task);
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleAction(action) {
+    setMenuVisible(false);
+    if (action === "cancel") {
+      Modal.confirm({
+        title: "取消抽取任务",
+        content: `确定取消「${task.filename}」吗？当前抽取进度将不再保留。`,
+        okText: "取消任务",
+        cancelText: "继续抽取",
+        onOk: () => runAction(action),
+      });
+      return;
+    }
+    runAction(action);
   }
   const config = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知", stage: task.stage || "处理中" };
   const stage = task.stage === "agent_verification" ? "文档级核查" : task.stage && task.stage !== task.status ? task.stage : config.stage;
@@ -85,6 +100,7 @@ function TaskListItem({ task, active, onSelect, onAction }) {
             <Menu onClickMenuItem={handleAction}>
               <Menu.Item key="view">查看详情</Menu.Item>
               <Menu.Item key="refresh">刷新状态</Menu.Item>
+              {!finished && <Menu.Item key="cancel">取消任务</Menu.Item>}
               {task.status === "succeeded" && <Menu.Item key="export">导出 CSV</Menu.Item>}
               {task.error && <Menu.Item key="error">查看错误详情</Menu.Item>}
               {finished && <Menu.Item key="remove">从列表移除</Menu.Item>}
