@@ -124,14 +124,14 @@ def main():
             raise RuntimeError(value.get("error"))
         return value
 
-    def upload(path, fast_mode=False):
+    def upload(path):
         with path.open("rb") as handle:
             response = session.post(base + "/api/upload", files={"files": (path.name, handle, "application/pdf")},
-                                    data={"fast_mode": str(fast_mode).lower(), "stream_thinking": "false",
+                                    data={"stream_thinking": "false",
                                           "split_mode": "paragraph", "paragraph_batch_size": "8"}, timeout=20)
         response.raise_for_status()
         identity = response.json()["tasks"][0]["task_id"]
-        report["tasks"].append({"task_id": identity, "fast_mode": fast_mode})
+        report["tasks"].append({"task_id": identity})
         save_report()
         return identity
 
@@ -147,13 +147,9 @@ def main():
         result = json.loads((config.storage_root / "results" / identity / "result.json").read_text())
         assert result["document_meta"]["llm"]["model"] == model
         assert len(result["relation_batches"]) >= 2
-        agent = result["agent_result"]
-        if not next(item["fast_mode"] for item in report["tasks"] if item["task_id"] == identity):
-            assert agent["status"] in ("completed", "partial"), agent
-            assert any(event["kind"] == "tool" for event in agent["trace"]), agent
         record = next(item for item in report["tasks"] if item["task_id"] == identity)
         record.update({"model": model, "batches": len(result["relation_batches"]),
-                       "relations": len(result["final_relations"]), "agent_status": agent["status"]})
+                       "relations": len(result["final_relations"])})
         save_report()
         print(json.dumps(record, ensure_ascii=False), flush=True)
         return result
@@ -186,9 +182,6 @@ def main():
         fourth = upload(document)
         complete(third, alternate)
         complete(fourth, settings.model)
-        fast = upload(document, True)
-        fast_result = complete(fast, settings.model)
-        assert fast_result["agent_result"]["status"] == "disabled"
         assert hashlib.sha256(args.input.read_bytes()).hexdigest() == source_hash
         assert ModelSettingsStore(config.storage_root).get(settings.base_url, settings.api_key, settings.model).api_key == settings.api_key
         response = session.put(base + "/api/settings/model", json={"base_url": settings.base_url, "model": "", "api_key": ""}, timeout=20)

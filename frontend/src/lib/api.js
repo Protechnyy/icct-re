@@ -38,18 +38,6 @@ export async function cancelTask(taskId) {
   return payload;
 }
 
-export async function getAgentEvents(taskId, afterSeq = 0, signal) {
-  const response = await fetch(`${API_BASE_URL}/agent/${encodeURIComponent(taskId)}/events?after_seq=${afterSeq}&limit=100`, { signal });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json();
-}
-
-export async function getAgentEvent(taskId, seq, signal) {
-  const response = await fetch(`${API_BASE_URL}/agent/${encodeURIComponent(taskId)}/events/${seq}`, { signal });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json();
-}
-
 export async function refreshTaskStatus(task) {
   try {
     return { ...await getTaskStatus(task.task_id), request_error: null };

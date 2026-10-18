@@ -36,7 +36,7 @@
 
 ### Requirement: 文本文件绕过 OCR 并进入抽取流程
 
-系统 MUST 直接读取 Markdown 和 TXT 内容，MUST NOT 调用 PaddleOCR 版面解析或文档重构。读取成功的文本 MUST 继续进入现有 Skills 路由、关系抽取、可选的文档校验及结果保存流程。
+系统 MUST 直接读取 Markdown 和 TXT 内容，MUST NOT 调用 PaddleOCR 版面解析或文档重构。读取成功的文本 MUST 继续进入现有 Skills 路由、关系抽取及结果保存流程。
 
 #### Scenario: 处理 Markdown 或 TXT 任务
 - **WHEN** Worker 处理有效的 Markdown 或 TXT 任务

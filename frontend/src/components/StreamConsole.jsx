@@ -209,14 +209,14 @@ export default function StreamConsole({ stream }) {
 
   const stageLine = stageText(stream);
 
-  return <section className="agent-workspace" aria-label="实时抽取输出">
-    <header className="agent-workspace-header">
-      <div className="agent-workspace-heading"><IconThunderbolt /><h3>实时抽取输出</h3>
-        <span className="agent-workspace-state" role="status">{stateText(stream)}</span></div>
-      <div className="agent-workspace-controls">
+  return <section className="stream-workspace" aria-label="实时抽取输出">
+    <header className="stream-workspace-header">
+      <div className="stream-workspace-heading"><IconThunderbolt /><h3>实时抽取输出</h3>
+        <span className="stream-workspace-state" role="status">{stateText(stream)}</span></div>
+      <div className="stream-workspace-controls">
         <Button type="text" size="mini" onClick={toggleExpanded} aria-expanded={expanded}>{expanded ? "折叠输出" : "展开输出"}</Button></div>
     </header>
-    {expanded && <div className="agent-workspace-body">
+    {expanded && <div className="stream-workspace-body">
       <div className="llm-stream-expanded" ref={scrollRef} onScroll={handleScroll}>
         {stageLine && <div className="llm-stream-stage">{stageLine}</div>}
         <StreamSectionList stream={stream} />

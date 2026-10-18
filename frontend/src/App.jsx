@@ -12,7 +12,6 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import ResultEmptyState from "./components/ResultEmptyState";
 import TaskTable from "./components/TaskTable";
 import UploadPanel from "./components/UploadPanel";
-import useAgentEvents from "./lib/useAgentEvents";
 import { cancelTask, exportTaskCsv, getTaskResult, getTaskStatus, refreshTaskStatus, uploadFiles } from "./lib/api";
 
 const terminalStatuses = ["succeeded", "failed", "cancelled"];
@@ -121,7 +120,6 @@ export default function App() {
     () => tasks.find((task) => task.task_id === activeTaskId) || null,
     [tasks, activeTaskId]
   );
-  const agentEvents = useAgentEvents(activeTask, results[activeTaskId]);
 
   useEffect(() => {
     setResultError("");
@@ -275,7 +273,7 @@ export default function App() {
               </aside>
               <section className="workbench-main">
                 {activeTask ? <Suspense fallback={<div className="result-loading" role="status"><Spin />正在加载抽取结果…</div>}>
-                  <ResultViewer task={activeTask} result={activeTaskId ? results[activeTaskId] : null} agentEvents={agentEvents} resultError={resultError} onRetryResult={() => setResultRetry((current) => current + 1)} />
+                  <ResultViewer task={activeTask} result={activeTaskId ? results[activeTaskId] : null} resultError={resultError} onRetryResult={() => setResultRetry((current) => current + 1)} />
                 </Suspense> : <ResultEmptyState />}
               </section>
             </div>

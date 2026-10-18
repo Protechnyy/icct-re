@@ -11,7 +11,6 @@ import pytest
 
 from app.config import AppConfig, RETIRED_MODEL_VARIABLES
 from app.model_settings import ModelSettingsError, ModelSettingsStore, resolve_model_settings
-from app.agent.budget import Budget
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,7 +20,7 @@ CHECK_ROOT.mkdir(parents=True, exist_ok=True)
 
 def read_config(**environment):
     env = {key: value for key, value in os.environ.items()
-           if key not in RETIRED_MODEL_VARIABLES and not key.startswith(("LLM_", "VERIFICATION_AGENT_"))}
+           if key not in RETIRED_MODEL_VARIABLES and not key.startswith("LLM_")}
     env.update(environment)
     result = subprocess.run(
         [sys.executable, "-c", "import json; from pathlib import Path; from app.config import AppConfig; "
@@ -47,20 +46,17 @@ def test_public_environment_defaults_and_overrides():
     summary = json.loads(result.stdout)
     assert summary["llm_backend"] == "vllm"
     assert summary["llm_request_timeout_seconds"] == 180
-    assert summary["verification_agent_max_tasks"] == 20
     assert "llm_api_key" not in summary
-    result = read_config(LLM_BACKEND="qwen_api", LLM_REQUEST_TIMEOUT_SECONDS="23",
-                         VERIFICATION_AGENT_MAX_TASKS="7")
+    result = read_config(LLM_BACKEND="qwen_api", LLM_REQUEST_TIMEOUT_SECONDS="23")
     assert result.returncode == 0, result.stderr
     summary = json.loads(result.stdout)
     assert summary["llm_backend"] == "qwen_api"
     assert summary["llm_request_timeout_seconds"] == 23
-    assert summary["verification_agent_max_tasks"] == 7
 
 
 @pytest.mark.parametrize("environment", [
     {"LLM_REQUEST_TIMEOUT_SECONDS": "0"}, {"LLM_MAX_RETRIES": "0"},
-    {"LLM_RETRY_BACKOFF_SECONDS": "nan"}, {"VERIFICATION_AGENT_MAX_TASKS": "-1"},
+    {"LLM_RETRY_BACKOFF_SECONDS": "nan"},
 ])
 def test_invalid_environment_fails(environment):
     result = read_config(**environment)
@@ -69,9 +65,9 @@ def test_invalid_environment_fails(environment):
 
 
 def test_retired_environment_reports_replacement():
-    result = read_config(AGENT_MODEL="qwen3.8-27b")
+    result = read_config(VLLM_MODEL="qwen3.8-27b")
     assert result.returncode != 0
-    assert "AGENT_MODEL → LLM_MODEL" in result.stderr
+    assert "VLLM_MODEL → LLM_MODEL" in result.stderr
 
 
 def test_saved_settings_snapshot_is_immutable_and_private():
@@ -156,13 +152,6 @@ def test_example_and_provider_environment():
     assert json.loads(result.stdout)["llm_backend"] == "vllm"
 
 
-def test_request_timeout_obeys_both_limits():
-    budget = Budget(10, 600, request_timeout_seconds=23)
-    assert budget.request_timeout() == 23
-    budget = Budget(10, 10, request_timeout_seconds=180)
-    assert 0 < budget.request_timeout() <= 10
-
-
 def test_bound_sdk_clients_preserve_document_settings():
     from app.skill4re_client import Skill4ReClient
 
@@ -191,7 +180,7 @@ def test_pipeline_rejects_configuration_before_ocr():
         config = replace(base_config(directory), llm_model="")
         pipeline = bootstrap_pipeline(config)
         with pytest.raises(ModelSettingsError, match="LLM_MODEL"):
-            pipeline.process_task("invalid-configuration", {"fast_mode": True})
+            pipeline.process_task("invalid-configuration", {})
 
 
 def test_evaluation_output_keeps_public_saved_settings():

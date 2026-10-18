@@ -13,3 +13,4 @@ test/
 .agents/
 .impeccable/
 .codex/
+.env.backup

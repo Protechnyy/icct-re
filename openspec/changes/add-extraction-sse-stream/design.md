@@ -6,13 +6,13 @@
 
 - 模型调用集中在 `skill4re/skill4re/backends.py` 的 OpenAI 兼容路径，`request_kwargs` 写死 `"stream": False`（约 L234），返回完整 response 后由上层解析 JSON。
 - 并发两层：`backend/app/pipeline.py` 批次线程池（`batch_concurrency`）与 `backend/app/skill4re_client.py` 的 `skill4re_max_workers`（默认 4）。worker 与 API 是**两个独立进程**，事件必须跨进程传递。
-- 已有可借力的模式：agent 校验的 trace 事件（worker 写 Redis、前端按 `after_seq` 增量轮询）。本设计将传输层升级为 SSE，事件结构保持同构心智。
+- Worker 将流式事件写入 Redis，API 通过 SSE 向浏览器提供增量事件。
 - 模型为百炼兼容端点上的 `qwen3.8-27b`：支持 `stream=True` 与 `extra_body={"enable_thinking": true}`；思考内容出现在 `delta.reasoning_content`，回答在 `delta.content`。
 
 ## Goal / Non-Goal
 
 - Goal：抽取阶段 LLM delta 的采集、跨进程中继、SSE 推送与前端控制台（第一版）。
-- Non-Goal：agent 阶段 token 流、OCR 阶段流、输出内容导出与持久化分析（见 proposal Non-goals）。
+- Non-Goal：OCR 阶段流、输出内容导出与持久化分析（见 proposal Non-goals）。
 
 ## Decisions
 
@@ -33,7 +33,7 @@
 
 ### D3. 跨进程中继：Redis Stream（XADD/XREAD），键 `task:{id}:llm`
 
-选 Redis Stream 而非 Pub/Sub：需要「中途订阅补历史 + 断线重连续传」，Stream 的 `XREAD` + 序号语义天然满足，且与 agent trace 事件的 `after_seq` 心智一致。
+Redis Stream 的 `XREAD` 和事件序号支持中途订阅时读取历史事件，以及连接中断后继续读取。
 
 - 事件字段：`seq`（用 Stream 自身 ID 派生或字段内单调计数）、`stream_id`、`kind`（think/answer/stage/done）、`text`。
 - 裁剪：`XADD` 配合 `XTRIM MAXLEN ~2000`，保留最近事件；任务终态后**不删除**，供完成后回看（数据量小，单任务几十 KB 量级）。
@@ -70,4 +70,4 @@ Flask `Response(generator, mimetype="text/event-stream")`，生成器内循环 `
 
 ## Open Questions
 
-- 无（三个决策点已与用户确认：thinking 默认开、折叠态跟随最新活跃流、agent 阶段二期）。
+- 无。

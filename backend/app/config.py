@@ -40,13 +40,6 @@ RETIRED_MODEL_VARIABLES = {
     "VLLM_RETRY_BACKOFF_SECONDS": "LLM_RETRY_BACKOFF_SECONDS",
     "SKILL4RE_API_MAX_RETRIES": "LLM_MAX_RETRIES",
     "SKILL4RE_API_RETRY_BACKOFF_SECONDS": "LLM_RETRY_BACKOFF_SECONDS",
-    "AGENT_BASE_URL": "LLM_BASE_URL",
-    "AGENT_API_KEY": "LLM_API_KEY",
-    "AGENT_MODEL": "LLM_MODEL",
-    **{f"AGENT_{name}": f"VERIFICATION_AGENT_{name}" for name in (
-        "ENABLED", "CONCURRENCY", "MAX_TASKS", "MAX_STEPS", "MAX_LLM_CALLS",
-        "TIMEOUT_SECONDS", "MAX_ADDED_PER_TASK",
-    )},
 }
 
 
@@ -131,13 +124,6 @@ class AppConfig:
     relation_max_batch_tokens: int = DEFAULT_RELATION_MAX_BATCH_TOKENS
     relation_include_parent_title: bool = DEFAULT_RELATION_INCLUDE_PARENT_TITLE
     relation_batch_concurrency: int = DEFAULT_RELATION_BATCH_CONCURRENCY
-    verification_agent_enabled: bool = False
-    verification_agent_concurrency: int = 1
-    verification_agent_max_tasks: int = 20
-    verification_agent_max_steps: int = 6
-    verification_agent_max_llm_calls: int = 80
-    verification_agent_timeout_seconds: int = 600
-    verification_agent_max_added_per_task: int = 5
     llm_max_retries: int = 3
     llm_retry_backoff_seconds: float = 2.0
     stream_enabled: bool = True
@@ -230,13 +216,6 @@ class AppConfig:
                 os.getenv("RELATION_BATCH_CONCURRENCY"),
                 DEFAULT_RELATION_BATCH_CONCURRENCY,
             ),
-            verification_agent_enabled=_as_bool(os.getenv("VERIFICATION_AGENT_ENABLED"), False),
-            verification_agent_concurrency=_positive_int("VERIFICATION_AGENT_CONCURRENCY", 1),
-            verification_agent_max_tasks=_positive_int("VERIFICATION_AGENT_MAX_TASKS", 20),
-            verification_agent_max_steps=_positive_int("VERIFICATION_AGENT_MAX_STEPS", 6),
-            verification_agent_max_llm_calls=_positive_int("VERIFICATION_AGENT_MAX_LLM_CALLS", 80),
-            verification_agent_timeout_seconds=_positive_int("VERIFICATION_AGENT_TIMEOUT_SECONDS", 600),
-            verification_agent_max_added_per_task=_positive_int("VERIFICATION_AGENT_MAX_ADDED_PER_TASK", 5),
             stream_enabled=_as_bool(os.getenv("STREAM_ENABLED"), True),
             stream_thinking=_as_bool(os.getenv("STREAM_THINKING"), True),
         )
@@ -278,13 +257,6 @@ class AppConfig:
             "relation_max_batch_tokens": self.relation_max_batch_tokens,
             "relation_include_parent_title": self.relation_include_parent_title,
             "relation_batch_concurrency": self.relation_batch_concurrency,
-            "verification_agent_enabled": self.verification_agent_enabled,
-            "verification_agent_concurrency": self.verification_agent_concurrency,
-            "verification_agent_max_tasks": self.verification_agent_max_tasks,
-            "verification_agent_max_steps": self.verification_agent_max_steps,
-            "verification_agent_max_llm_calls": self.verification_agent_max_llm_calls,
-            "verification_agent_timeout_seconds": self.verification_agent_timeout_seconds,
-            "verification_agent_max_added_per_task": self.verification_agent_max_added_per_task,
             "stream_enabled": self.stream_enabled,
             "stream_thinking": self.stream_thinking,
         }

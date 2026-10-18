@@ -12,7 +12,7 @@ def configure_environment(source: Path, output: Path) -> None:
     address_names = {"qwen_api": "SKILL4RE_BASE_URL", "openai": "SKILL4RE_BASE_URL", "api": "SKILL4RE_BASE_URL"}
     key_names = {"qwen_api": "DASHSCOPE_API_KEY", "openai": "OPENAI_API_KEY", "api": "DEEPSEEK_API_KEY"}
     public = {new: values[old] for old, new in RETIRED_MODEL_VARIABLES.items() if old in values}
-    public.update({key: value for key, value in values.items() if key.startswith(("LLM_", "VERIFICATION_AGENT_"))})
+    public.update({key: value for key, value in values.items() if key.startswith("LLM_")})
     public["LLM_BACKEND"] = backend
     public["LLM_BASE_URL"] = values.get("LLM_BASE_URL") or values.get(address_names.get(backend, "VLLM_BASE_URL")) or values.get("VLLM_BASE_URL", "")
     public["LLM_API_KEY"] = values.get("LLM_API_KEY") or values.get(key_names.get(backend, "VLLM_API_KEY"), "")

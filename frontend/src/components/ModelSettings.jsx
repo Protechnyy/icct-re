@@ -203,7 +203,7 @@ export default function ModelSettings({ visible, onClose, onSaved, onAfterClose 
         />
       ) : settings ? (
         <form id="model-settings-form" className="model-settings-form" onSubmit={saveSettings} aria-labelledby="model-settings-title">
-          <div className="model-settings-summary">当前后端：{backendLabels[settings.backend] || settings.backend}。关系抽取、skills 路由和校验智能体共用；保存后对后续开始处理的文档生效。</div>
+          <div className="model-settings-summary">当前后端：{backendLabels[settings.backend] || settings.backend}。关系抽取和 skills 路由共用；保存后对后续开始处理的文档生效。</div>
 
           <div className="model-settings-field">
             <label htmlFor="model-api-key">API Key</label>

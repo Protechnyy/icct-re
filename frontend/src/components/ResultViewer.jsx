@@ -10,11 +10,10 @@ import Tag from "@arco-design/web-react/es/Tag";
 import Tooltip from "@arco-design/web-react/es/Tooltip";
 import Typography from "@arco-design/web-react/es/Typography";
 import { IconCode, IconCopy, IconDownload, IconFile, IconRefresh, IconSearch } from "@arco-design/web-react/icon";
-import { cloneElement, useEffect, useMemo, useState } from "react";
+import { cloneElement, useMemo, useState } from "react";
 import { exportTaskCsv } from "../lib/api";
 import useLlmStream from "../lib/useLlmStream";
 import { STATUS_CONFIG } from "./TaskTable";
-import { AgentWorkspace, AgentRelationDetails, VERIFICATION_LABELS, hasAgentResult } from "./AgentVerification";
 import ResultEmptyState from "./ResultEmptyState";
 import ResizableResultTable from "./ResizableResultTable";
 import StreamConsole from "./StreamConsole";
@@ -117,7 +116,6 @@ const STAGE_LABELS = {
   layout_parsing: "版面解析",
   restructure_pages: "文档重构",
   relation_extraction: "关系抽取",
-  agent_verification: "文档级核查",
   document_merge: "结果合并",
   completed: "处理完成",
   failed: "处理失败",
@@ -128,7 +126,6 @@ const TIMING_LABELS = {
   layout_parsing_seconds: "版面解析",
   document_restructure_seconds: "文档重构",
   relation_extraction_seconds: "关系抽取",
-  agent_verification_seconds: "文档核查",
   document_merge_seconds: "结果合并",
   routing_seconds: "Skill 路由",
   coref_seconds: "指代消解",
@@ -174,23 +171,20 @@ function splitModeLabel(splitMode) {
   }[splitMode] || "小节";
 }
 
-export default function ResultViewer({ task, result, agentEvents, resultError, onRetryResult }) {
+export default function ResultViewer({ task, result, resultError, onRetryResult }) {
   const [activeTab, setActiveTab] = useState("preview");
   const [exportingCsv, setExportingCsv] = useState(false);
-  const [selectedRelation, setSelectedRelation] = useState(null);
   const [entityWidths, setEntityWidths] = useState({});
   const [relationWidths, setRelationWidths] = useState({});
   const relationRows = useMemo(() => getRelations(result).map((item, index) => ({
     ...item,
     resultRowKey: `${task?.task_id}:${index}`,
   })), [result, task?.task_id]);
-  useEffect(() => setSelectedRelation(null), [task?.task_id]);
   const llmStream = useLlmStream(task?.task_id, task?.status);
   if (!task) return <ResultEmptyState />;
   const status = STATUS_CONFIG[task.status] || { color: "gray", label: task.status || "未知" };
   const relations = getRelations(result);
   const entities = getEntities(relations);
-  const showAgent = hasAgentResult(result);
   const entityColumns = [
     { key: "name", title: "实体名称", dataIndex: "name", ellipsis: true },
     { key: "source", title: "来源段落", width: 360, render: (_, item) => <SourceParagraphs paragraphs={item.sourceParagraphs} /> },
@@ -200,7 +194,6 @@ export default function ResultViewer({ task, result, agentEvents, resultError, o
     { key: "relation", title: "关系", render: (_, item) => item.relation || "-", width: 150, ellipsis: true },
     { key: "object", title: "客体", render: (_, item) => item.object || item.tail || item.tail_entity || "-", ellipsis: true },
     { key: "source", title: "来源段落", render: (_, item) => <SourceParagraphs paragraphs={item.source_paragraphs} />, width: 360 },
-    ...(showAgent ? [{ key: "verification", title: "核查状态", width: 130, render: (_, item) => <Button type="text" size="mini" onClick={() => setSelectedRelation(item)}>{VERIFICATION_LABELS[item.verification?.status] || "未核查"}</Button> }] : []),
   ];
   const tabItems = [
     { key: "preview", title: "文档预览", content: <DocumentPreview result={result} /> },
@@ -245,8 +238,6 @@ export default function ResultViewer({ task, result, agentEvents, resultError, o
       <Space className="task-summary-actions" wrap><Tooltip content="当前后端暂未提供重新执行接口"><Button icon={<IconRefresh />} disabled>重新执行</Button></Tooltip><Button icon={<IconDownload />} onClick={() => result && downloadFile(`${task.filename}.json`, result)} disabled={!result}>导出 JSON</Button><Button type="primary" icon={<IconDownload />} loading={exportingCsv} disabled={!result} onClick={handleExportCsv}>导出 CSV</Button></Space>
     </div>
     <StreamConsole stream={llmStream} />
-    <AgentWorkspace task={task} agent={result?.agent_result} stream={agentEvents} />
-    {showAgent && <AgentRelationDetails relation={selectedRelation} agent={result.agent_result} onClose={() => setSelectedRelation(null)} />}
     {resultError && <Alert className="result-request-error" type="error" title="读取抽取结果失败" content={resultError} action={<Button onClick={onRetryResult}>重新读取</Button>} />}
     {!result && task.status === "failed" ? <Alert type="error" title="任务执行失败" content={task.error || "请检查运行日志后重新执行任务。"} closable={false} /> : null}
     {!result && task.status !== "failed" ? <div className="result-pending"><Empty description="结果尚未就绪，系统将持续更新任务进度。" /></div> : <>

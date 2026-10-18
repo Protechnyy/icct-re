@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import closing
-from dataclasses import replace
 import json
 import logging
 import re
@@ -24,9 +23,6 @@ from .config import (
 from .llm_stream import publish_delta, publish_done, publish_stage
 from .model_settings import LlmRequestSettings, ModelSettingsStore, resolve_model_settings
 from .paddle_ocr import PaddleOcrClient
-from .agent import verify_document
-from .agent.relations import assign_relation_ids
-from .agent.trace import Trace
 from .skill4re_client import RelationExtractor, Skill4ReClient
 from .types import Chunk, RestructuredDocument, TaskCancelledError
 from .utils import TEXT_FILE_TYPE, chunk_text_with_page_map, read_text_document, utcnow_iso
@@ -71,12 +67,7 @@ class DocumentPipeline:
     def process_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_not_cancelled(task_id)
         task_started_at = time.perf_counter()
-        fast_mode = payload.get("fast_mode", not self.config.verification_agent_enabled)
-        if not isinstance(fast_mode, bool):
-            raise ValueError("fast_mode must be a boolean")
         settings = resolve_model_settings(self.config, self.model_settings_store)
-        if settings.backend == "local_qwen3" and not fast_mode:
-            raise ValueError("local_qwen3 不支持校验智能体的工具调用连接")
         LOGGER.info("Document %s model configuration: %s", task_id, settings.public_summary())
         with closing(self.relation_extractor.for_document(settings)) as extractor:
             return self._process_task(task_id, payload, settings, extractor, task_started_at)
@@ -89,16 +80,12 @@ class DocumentPipeline:
         file_path = Path(payload["file_path"])
         filename = payload["filename"]
         file_type = int(payload["file_type"])
-        fast_mode = payload.get("fast_mode", not self.config.verification_agent_enabled)
-        if not isinstance(fast_mode, bool):
-            raise ValueError("fast_mode must be a boolean")
         stream_thinking = payload.get("stream_thinking", self.config.stream_thinking)
         if not isinstance(stream_thinking, bool):
             raise ValueError("stream_thinking must be a boolean")
         reasoning_effort = payload.get("reasoning_effort", "")
         if reasoning_effort not in {"", "low", "medium", "high"}:
             raise ValueError("reasoning_effort must be low, medium, high or empty")
-        agent_config = replace(self.config, verification_agent_enabled=not fast_mode)
         self.task_store.reset_task_runtime(task_id)
 
         if file_type == TEXT_FILE_TYPE:
@@ -151,33 +138,7 @@ class DocumentPipeline:
             stream_thinking=stream_thinking,
             reasoning_effort=reasoning_effort,
         )
-        pre_agent_relations = assign_relation_ids(final_relations)
-        agent_result = {"status": "disabled"}
-        if agent_config.verification_agent_enabled:
-            self._ensure_not_cancelled(task_id)
-            self.task_store.update_task(task_id, status="verifying", stage="agent_verification", progress=70)
-            stage_started_at = time.perf_counter()
-            def report_agent_progress(agent_progress):
-                fraction = agent_progress.get("finished_tasks", 0) / max(1, agent_progress.get("total_tasks", 0))
-                self.task_store.update_task(task_id, stage="agent_verification",
-                    progress=min(84, 70 + int(14 * fraction)), agent_progress=agent_progress)
-            trace = Trace(report_agent_progress, document_task_id=task_id,
-                          event_callback=lambda event: self.task_store.append_agent_event(task_id, event))
-            try:
-                trace.emit("phase_start", summary="智能体校验已开始")
-                final_relations, agent_result = verify_document(
-                    pre_agent_relations, relation_sections, document_text, agent_config, report_agent_progress,
-                    trace=trace, settings=settings)
-            except Exception as exc:
-                final_relations = assign_relation_ids(pre_agent_relations)
-                agent_result = {"status": "failed", "reason": "核查阶段失败：" + type(exc).__name__,
-                                "summary": {}, "tasks": [], "trace": [], "removed_relations": [],
-                                "entity_aliases": {}, "changes": []}
-            trace.finish(agent_result)
-            timing["agent_verification_seconds"] = round(time.perf_counter() - stage_started_at, 4)
-            # 校验智能体不响应中途取消，结束一轮后在此终止，避免取消的任务继续写入结果
-            self._ensure_not_cancelled(task_id)
-
+        self._ensure_not_cancelled(task_id)
         self.task_store.update_task(task_id, status="merging", stage="document_merge", progress=85)
         stage_started_at = time.perf_counter()
         safe_layout_result = {k: v for k, v in layout_result.items() if k != "_pages_res"}
@@ -220,8 +181,6 @@ class DocumentPipeline:
             "stage_outputs": stage_outputs,
             "skill4re_result": skill4re_result,
             "final_relations": final_relations,
-            "pre_agent_relations": pre_agent_relations,
-            "agent_result": agent_result,
             "final_relation_list": {"relation_list": final_relations},
         }
         timing["document_merge_seconds"] = round(time.perf_counter() - stage_started_at, 4)
@@ -231,8 +190,6 @@ class DocumentPipeline:
             **({"document_restructure_seconds": timing["document_restructure_seconds"]} if "document_restructure_seconds" in timing else {}),
             "relation_extraction_seconds": timing["relation_extraction_seconds"],
             "document_merge_seconds": timing["document_merge_seconds"],
-            **({"agent_verification_seconds": timing["agent_verification_seconds"]}
-               if "agent_verification_seconds" in timing else {}),
         }
         stage_outputs["timing"] = timing
         skill4re_result["timing"] = timing
